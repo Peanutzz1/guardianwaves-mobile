@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "268881505490",
+    "project_id": "guardianwaves-68df1",
+    "storage_bucket": "guardianwaves-68df1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:268881505490:android:16bd581e7c8e7082af110b",
+        "android_client_info": {
+          "package_name": "com.guardianwaves.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "268881505490-dor5rg4boq769t1ifplcb6n2qnvh9ucl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.guardianwaves.mobile",
+            "certificate_hash": "b5b377d82e53f9f64b2da71ea6a23d4c6e5f8c25"
+          }
+        },
+        {
+          "client_id": "268881505490-o0me5enqrpjr3r7n69in336u9nhtk6b5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD76GKUDoDO-pGUIxd1UHVg_-VXWs4NlMc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "268881505490-o0me5enqrpjr3r7n69in336u9nhtk6b5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
