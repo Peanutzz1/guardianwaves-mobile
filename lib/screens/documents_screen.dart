@@ -766,8 +766,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       );
     }
 
+    // Reset time to start of day for accurate calculation (matching web app)
     final now = DateTime.now();
-    if (expiry.isBefore(now)) {
+    final startOfToday = DateTime(now.year, now.month, now.day);
+    final startOfExpiry = DateTime(expiry.year, expiry.month, expiry.day);
+    
+    if (startOfExpiry.isBefore(startOfToday)) {
       return const ExpiryStatus(
         label: 'Expired',
         color: Colors.red,
@@ -775,7 +779,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       );
     }
 
-    if (expiry.difference(now).inDays <= 30) {
+    if (startOfExpiry.difference(startOfToday).inDays <= 30) {
       return const ExpiryStatus(
         label: 'Expiring Soon',
         color: Colors.orange,
@@ -819,8 +823,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   String _formatExpiryDistance(DateTime expiry) {
+    // Reset time to start of day for accurate calculation (matching web app)
     final now = DateTime.now();
-    Duration difference = expiry.difference(now);
+    final startOfToday = DateTime(now.year, now.month, now.day);
+    final startOfExpiry = DateTime(expiry.year, expiry.month, expiry.day);
+    
+    Duration difference = startOfExpiry.difference(startOfToday);
     final bool isPast = difference.isNegative;
     difference = difference.abs();
 

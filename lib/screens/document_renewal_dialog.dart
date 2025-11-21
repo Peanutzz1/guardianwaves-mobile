@@ -42,20 +42,87 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
   DateTime? _selectedDateIssued;
   DateTime? _selectedDateExpiry;
 
+  // Position list for SIRB and COC (Certificate of Competency)
+  static const List<String> _positionList = [
+    'MASTER',
+    'CHIEF OFFICER',
+    'DECK OFFICER',
+    '2ND OFFICER',
+    '3RD OFFICER',
+    'CHIEF ENGINEER',
+    '2ND MARINE ENGINEER',
+    '3RD MARINE ENGINEER',
+    '4TH MARINE ENGINEER',
+    'ABLE SEAMAN',
+    'OILER',
+    'BOSUN',
+    'ORDINARY SEAMAN',
+    'RADIO OPERATOR',
+    'CRANE OPERATOR',
+    'DECK CADET',
+    'ENGINE CADET',
+    'APPRENTICE MATE',
+    'CHIEF COOK',
+  ];
+
+  // License types list
+  static const List<String> _licenseTypes = [
+    '2ND MATE',
+    '2ND MARINE ENGINEER',
+    '3RD MATE',
+    '3RD MARINE ENGINEER',
+    '4TH MARINE ENGINEER',
+    'BOAT CAPTAIN 2',
+    'BOAT CAPTAIN 1',
+    'CHIEF MATE',
+    'CHIEF ENGINEER',
+    'MAJOR PATRON',
+    'MINOR PATRON',
+    'MARINE DIESEL MECHANIC 2',
+    'MARINE DIESEL MECHANIC 1',
+    'MARINE ENGINE MECHANIC 3',
+    'MARINE ENGINE MECHANIC 2',
+    'MARINE ENGINE MECHANIC 1',
+    'MOTORMAN',
+    'MASTER MARINER',
+    'OIC-NAVIGATIONAL WATCH',
+    'OIC-ENGINEERING WATCH',
+  ];
+
   @override
   void initState() {
     super.initState();
     
-    // For SIRB, COC, and License: use crewName for name field, name for type field
+    // For SIRB, COC, and License: use crewName for name field, name for position/type field
     // For other certificates: use name for certificate type field
     final isCrewDocument = widget.document.type == 'SIRB' || 
                           widget.document.type == 'Certificate of Competency' ||
                           widget.document.type == 'License';
     
     if (isCrewDocument && widget.document.crewName != null) {
-      // Crew member documents: separate name and type
+      // Crew member documents: separate name and position/type
       _nameController.text = widget.document.crewName!;
-      _certificateTypeController.text = widget.document.name;
+      // For SIRB and COC, document.name might contain the position
+      // For License, document.name contains the license type
+      if (widget.document.type == 'SIRB' || widget.document.type == 'Certificate of Competency') {
+        // Check if document.name is a valid position, otherwise leave empty
+        final docName = widget.document.name.trim();
+        if (docName.isNotEmpty && _positionList.contains(docName)) {
+          _certificateTypeController.text = docName;
+        } else {
+          _certificateTypeController.text = '';
+        }
+      } else if (widget.document.type == 'License') {
+        // Check if document.name is a valid license type, otherwise leave empty
+        final docName = widget.document.name.trim();
+        if (docName.isNotEmpty && _licenseTypes.contains(docName)) {
+          _certificateTypeController.text = docName;
+        } else {
+          _certificateTypeController.text = '';
+        }
+      } else {
+        _certificateTypeController.text = widget.document.name;
+      }
     } else {
       // Regular certificates: name goes to certificate type field
       _certificateTypeController.text = widget.document.name;
@@ -167,9 +234,23 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             _nameController.text = certificateData['name'] as String;
           }
           
-          // Populate certificate/license type field
-          if (certificateData['certificateType'] != null || certificateData['licenseType'] != null) {
-            _certificateTypeController.text = (certificateData['certificateType'] ?? certificateData['licenseType']) as String;
+          // Populate position/certificate/license type field
+          // For SIRB and COC, check for position field first, then certificateType
+          if (widget.document.type == 'SIRB' || widget.document.type == 'Certificate of Competency') {
+            if (certificateData['position'] != null) {
+              _certificateTypeController.text = certificateData['position'] as String;
+            } else if (certificateData['certificateType'] != null) {
+              _certificateTypeController.text = certificateData['certificateType'] as String;
+            }
+          } else if (widget.document.type == 'License') {
+            // For License, check for licenseType field first, then certificateType
+            if (certificateData['licenseType'] != null) {
+              _certificateTypeController.text = certificateData['licenseType'] as String;
+            } else if (certificateData['certificateType'] != null) {
+              _certificateTypeController.text = certificateData['certificateType'] as String;
+            }
+          } else if (certificateData['certificateType'] != null) {
+            _certificateTypeController.text = certificateData['certificateType'] as String;
           }
           
           if (certificateData['dateIssued'] != null) {
@@ -349,13 +430,16 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
       return;
     }
     
+    // Validate position/certificate type field
     if (_certificateTypeController.text.trim().isEmpty) {
       final fieldName = widget.document.type == 'License' 
           ? 'license type' 
-          : 'certificate type';
+          : (widget.document.type == 'SIRB' || widget.document.type == 'Certificate of Competency')
+              ? 'position'
+              : 'certificate type';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Please enter $fieldName'),
+          content: Text('Please select $fieldName'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -884,10 +968,11 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
         debugPrint('📍 Found crew member at index: $crewIndex');
         
         if (crewIndex != -1) {
-          // Update SIRB entry - name field contains person's name
+          // Update SIRB entry - name field contains person's name, position field contains position
           officersCrew[crewIndex] = {
             ...officersCrew[crewIndex],
             'name': _nameController.text.trim(),
+            'position': _certificateTypeController.text.trim(), // Position for SIRB
             'dateIssued': dateIssuedFormatted,
             'seafarerIdExpiry': dateExpiryFormatted,
             'expiryDate': dateExpiryFormatted,
@@ -1156,21 +1241,69 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
                         widget.document.type == 'License')
                       const SizedBox(height: 16),
                     
-                    // Certificate Type / License Type
-                    TextField(
-                      controller: _certificateTypeController,
-                      decoration: InputDecoration(
-                        labelText: (widget.document.type == 'License') 
-                            ? 'License Type *' 
-                            : (widget.document.type == 'Certificate of Competency')
-                                ? 'Certificate Type *'
-                                : (widget.document.type == 'SIRB')
-                                    ? 'Certificate Type *'
-                                    : 'Certificate Type *',
-                        border: const OutlineInputBorder(),
-                        prefixIcon: const Icon(Icons.description),
-                      ),
-                    ),
+                    // Certificate Type / Position / License Type
+                    widget.document.type == 'Certificate of Competency' || widget.document.type == 'SIRB'
+                        ? DropdownButtonFormField<String>(
+                            value: _certificateTypeController.text.isEmpty
+                                ? null
+                                : _certificateTypeController.text,
+                            decoration: const InputDecoration(
+                              labelText: 'Position *',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.badge),
+                            ),
+                            isExpanded: true,
+                            items: _positionList.map((String position) {
+                              return DropdownMenuItem<String>(
+                                value: position,
+                                child: Text(
+                                  position,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (String? newValue) {
+                              setState(() {
+                                _certificateTypeController.text = newValue ?? '';
+                              });
+                            },
+                          )
+                        : widget.document.type == 'License'
+                            ? DropdownButtonFormField<String>(
+                                value: _certificateTypeController.text.isEmpty
+                                    ? null
+                                    : _certificateTypeController.text,
+                                decoration: const InputDecoration(
+                                  labelText: 'License Type *',
+                                  border: OutlineInputBorder(),
+                                  prefixIcon: Icon(Icons.badge),
+                                ),
+                                isExpanded: true,
+                                items: _licenseTypes.map((String license) {
+                                  return DropdownMenuItem<String>(
+                                    value: license,
+                                    child: Text(
+                                      license,
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (String? newValue) {
+                                  setState(() {
+                                    _certificateTypeController.text = newValue ?? '';
+                                  });
+                                },
+                              )
+                            : TextField(
+                                controller: _certificateTypeController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Certificate Type *',
+                                  border: OutlineInputBorder(),
+                                  prefixIcon: Icon(Icons.description),
+                                ),
+                              ),
                     
                     const SizedBox(height: 16),
                     
