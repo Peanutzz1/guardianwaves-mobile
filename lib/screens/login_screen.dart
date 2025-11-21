@@ -51,13 +51,24 @@ class _LoginScreenState extends State<LoginScreen> {
         print('🔍 Checking OTP requirement...');
         print('   - User accountStatus: ${authProvider.user?['accountStatus']}');
         print('   - User otpVerified: ${authProvider.user?['otpVerified']}');
+        print('   - User createdBy: ${authProvider.user?['createdBy']}');
         print('   - requiresOTPVerification: ${authProvider.requiresOTPVerification}');
         
-        // Check if OTP verification is required
+        // CRITICAL: Google sign-in users never need OTP - skip check entirely
+        final createdBy = authProvider.user?['createdBy'];
+        if (createdBy == 'google-signin') {
+          print('✅ Google sign-in user detected - skipping OTP, going directly to dashboard');
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const MainNavigation()),
+          );
+          return;
+        }
+        
+        // Check if OTP verification is required (only for manual sign-up users)
         if (authProvider.requiresOTPVerification || 
             authProvider.user?['accountStatus'] == 'pending-verification' ||
             authProvider.user?['otpVerified'] == false) {
-          print('🔍 OTP verification required, redirecting to verify-otp');
+          print('🔍 OTP verification required for manual sign-up, redirecting to verify-otp');
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (context) => VerifyOTPScreen(
@@ -87,42 +98,28 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     if (result['success'] == true) {
-      final requiresOTP = result['requiresOTP'] == true ||
-          authProvider.requiresOTPVerification;
-      final dynamic resultUser = result['user'];
-      final email = authProvider.user?['email'] ??
-          (resultUser is Map<String, dynamic> ? resultUser['email'] : null) ??
-          '';
-
-      // Additional check: if user is already verified, don't require OTP
-      final user = authProvider.user;
-      final finalRequiresOTP = requiresOTP && 
-          !(user != null && 
-            user['otpVerified'] == true && 
-            user['accountStatus'] == 'active');
-
-      print('🔍 Google Sign-In result:');
-      print('   - requiresOTP from result: ${result['requiresOTP']}');
-      print('   - requiresOTPVerification: ${authProvider.requiresOTPVerification}');
-      print('   - User otpVerified: ${user?['otpVerified']}');
-      print('   - User accountStatus: ${user?['accountStatus']}');
-      print('   - Final requiresOTP: $finalRequiresOTP');
-
-      if (finalRequiresOTP) {
-        print('📧 OTP verification required for Google user, redirecting to verify-otp');
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => VerifyOTPScreen(
-              email: email,
-            ),
-          ),
-        );
-      } else {
-        print('✅ User is verified - navigating to dashboard');
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const MainNavigation()),
-        );
+      // Google sign-in users never need OTP verification
+      // Google already verifies their email, so we skip OTP entirely
+      print('✅ Google Sign-In successful - skipping OTP verification');
+      print('   - User createdBy: ${authProvider.user?['createdBy']}');
+      print('   - User otpVerified: ${authProvider.user?['otpVerified']}');
+      print('   - User accountStatus: ${authProvider.user?['accountStatus']}');
+      
+      // CRITICAL: Ensure user data has createdBy set before navigation
+      // This prevents any OTP screen from appearing
+      if (authProvider.user != null && authProvider.user!['createdBy'] != 'google-signin') {
+        print('⚠️ createdBy not set, refreshing user data...');
+        await authProvider.refreshUserData();
       }
+      
+      // Always navigate directly to dashboard for Google sign-in users
+      // NEVER show OTP screen for Google sign-in
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const MainNavigation()),
+      );
+    } else {
+      // Handle error case
+      print('❌ Google Sign-In failed: ${result['error']}');
     }
   }
 

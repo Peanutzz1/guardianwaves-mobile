@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'add_vessel_screen_v2.dart';
 import 'document_renewal_dialog.dart';
+import 'add_crew_member_dialog.dart';
 import '../models/document_item.dart';
 
 class VesselDetailScreen extends StatefulWidget {
@@ -73,7 +74,7 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                   ),
                 ),
               );
-            },
+              },
           ),
         ],
       ),
@@ -334,9 +335,47 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
     );
   }
 
+  // Helper function to extract manning data from lists by position
+  Map<String, String> _getManningDataByPosition(
+    List<dynamic>? departmentList,
+    String position,
+  ) {
+    if (departmentList == null || departmentList.isEmpty) {
+      return {'license': 'N/A', 'number': 'N/A'};
+    }
+
+    for (var entry in departmentList) {
+      final entryMap = entry as Map<String, dynamic>?;
+      if (entryMap == null) continue;
+      
+      final entryPosition = entryMap['position']?.toString().toUpperCase().trim() ?? '';
+      if (entryPosition == position.toUpperCase().trim()) {
+        return {
+          'license': entryMap['license']?.toString() ?? 'N/A',
+          'number': entryMap['number']?.toString() ?? 'N/A',
+        };
+      }
+    }
+
+    return {'license': 'N/A', 'number': 'N/A'};
+  }
+
   Widget _buildStep3Tab() {
     // Step 3: Manning Requirements
     final data = _vesselData ?? widget.vesselData;
+    
+    // Get deck and engine department lists
+    final deckDepartment = data['deckDepartment'] as List? ?? [];
+    final engineDepartment = data['engineDepartment'] as List? ?? [];
+    
+    // Extract data for each position from the lists
+    final masterData = _getManningDataByPosition(deckDepartment, 'MASTER');
+    final chiefOfficerData = _getManningDataByPosition(deckDepartment, 'CHIEF OFFICER');
+    final deckRatingsData = _getManningDataByPosition(deckDepartment, 'RATINGS');
+    
+    final chiefEngineOfficerData = _getManningDataByPosition(engineDepartment, 'CHIEF ENGINE OFFICER');
+    final engineOfficerData = _getManningDataByPosition(engineDepartment, 'ENGINE OFFICER');
+    final engineRatingsData = _getManningDataByPosition(engineDepartment, 'RATINGS');
     
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -349,9 +388,9 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
           // Deck Department
           _buildSectionTitle('Deck Department'),
           _buildManningTable([
-            ['MASTER', data['masterLicense'] ?? 'N/A', data['masterNumber'] ?? 'N/A'],
-            ['CHIEF OFFICER', data['chiefOfficerLicense'] ?? 'N/A', data['chiefOfficerNumber'] ?? 'N/A'],
-            ['RATINGS', 'N.A', data['deckRatingsNumber'] ?? 'N/A'],
+            ['MASTER', masterData['license'] ?? 'N/A', masterData['number'] ?? 'N/A'],
+            ['CHIEF OFFICER', chiefOfficerData['license'] ?? 'N/A', chiefOfficerData['number'] ?? 'N/A'],
+            ['RATINGS', deckRatingsData['license'] ?? 'N.A', deckRatingsData['number'] ?? 'N/A'],
           ]),
           
           const SizedBox(height: 24),
@@ -359,20 +398,20 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
           // Engine Department
           _buildSectionTitle('Engine Department'),
           _buildManningTable([
-            ['CHIEF ENGINE OFFICER', data['chiefEngineOfficerLicense'] ?? 'N/A', data['chiefEngineOfficerNumber'] ?? 'N/A'],
-            ['ENGINE OFFICER', data['engineOfficerLicense'] ?? 'N/A', data['engineOfficerNumber'] ?? 'N/A'],
-            ['RATINGS', 'N.A', data['engineRatingsNumber'] ?? 'N/A'],
+            ['CHIEF ENGINE OFFICER', chiefEngineOfficerData['license'] ?? 'N/A', chiefEngineOfficerData['number'] ?? 'N/A'],
+            ['ENGINE OFFICER', engineOfficerData['license'] ?? 'N/A', engineOfficerData['number'] ?? 'N/A'],
+            ['RATINGS', engineRatingsData['license'] ?? 'N.A', engineRatingsData['number'] ?? 'N/A'],
           ]),
           
           const SizedBox(height: 24),
           
           // PSSC
           _buildSectionTitle('Total Number of Persons Allowed Onboard (PSSC)'),
-          _buildInfoCard([
-            _buildInfoRow('Passenger with Accommodation', data['passengerAccommodation'] ?? 'N.A'),
-            _buildInfoRow('Authorized Number of Crew', data['authorizedCrew'] ?? 'N/A'),
-            _buildInfoRow('Others (Support/Ancillaries etc.)', data['othersNumber'] ?? 'N/A'),
-          ]),
+          _buildPsscCard(
+            authorizedCrew: data['authorizedCrew']?.toString() ?? 'N/A',
+            othersNumber: data['othersNumber']?.toString() ?? 'N/A',
+            passengerAccommodation: data['passengerAccommodation']?.toString() ?? 'N.A',
+          ),
         ],
       ),
     );
@@ -605,9 +644,9 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: InkWell(
-                          onTap: () {
+                              onTap: () {
                             _viewFile(fileUrl.toString());
-                          },
+                            },
                           child: Text(
                             'View Certificate File',
                             style: TextStyle(
@@ -798,10 +837,10 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: InkWell(
-                          onTap: () {
+                              onTap: () {
                             // Open file viewer
                             _viewFile(cert['certificateFileUrl'] ?? cert['fileUrl']);
-                          },
+                            },
                           child: Text(
                             'View Certificate File',
                             style: TextStyle(
@@ -978,6 +1017,122 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
     }
   }
 
+  // Show dialog to select certificate type when adding crew
+  void _showAddCrewDialog() {
+    final data = _vesselData ?? widget.vesselData;
+    final officersCrew = data['officersCrew'] as List? ?? [];
+    final competencyCertificates = data['competencyCertificates'] as List? ?? [];
+    final competencyLicenses = data['competencyLicenses'] as List? ?? [];
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Add Crew Member',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Select the certificate type for this crew member:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              // SIRB option
+              ListTile(
+                leading: Icon(Icons.badge, color: Colors.blue.shade700),
+                title: const Text('SIRB', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(
+                  'Seafarer Identification and Record Book (${officersCrew.length})',
+              style: const TextStyle(fontSize: 12),
+            ),
+                trailing: Icon(Icons.arrow_forward_ios, size: 16, color: Colors.blue.shade700),
+                onTap: () {
+                      Navigator.of(context).pop();
+                  // Show Add Crew Member dialog for SIRB
+                  showDialog(
+                context: context,
+                builder: (context) => AddCrewMemberDialog(
+                  vesselId: widget.vesselId,
+                  certificateType: 'SIRB',
+                ),
+                  ).then((result) {
+                if (result == true) {
+                  // Refresh vessel data after adding crew member
+                  _loadVesselData();
+                }
+              });
+              },
+          ),
+              const Divider(),
+              // COC option
+              ListTile(
+                leading: Icon(Icons.card_membership, color: Colors.green.shade700),
+                title: const Text('COC', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(
+                  'Certificate of Competency (${competencyCertificates.length})',
+              style: const TextStyle(fontSize: 12),
+            ),
+                trailing: Icon(Icons.arrow_forward_ios, size: 16, color: Colors.green.shade700),
+                onTap: () {
+                      Navigator.of(context).pop();
+                  // Show Add Crew Member dialog for COC
+                  showDialog(
+                context: context,
+                builder: (context) => AddCrewMemberDialog(
+                  vesselId: widget.vesselId,
+                  certificateType: 'COC',
+                ),
+                  ).then((result) {
+                if (result == true) {
+                  // Refresh vessel data after adding crew member
+                  _loadVesselData();
+                }
+              });
+              },
+          ),
+              const Divider(),
+              // License option
+              ListTile(
+                leading: Icon(Icons.verified, color: Colors.orange.shade700),
+                title: const Text('License', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(
+                  'License Certificate (${competencyLicenses.length})',
+              style: const TextStyle(fontSize: 12),
+            ),
+                trailing: Icon(Icons.arrow_forward_ios, size: 16, color: Colors.orange.shade700),
+                onTap: () {
+                      Navigator.of(context).pop();
+                  // Show Add Crew Member dialog for License
+                  showDialog(
+                context: context,
+                builder: (context) => AddCrewMemberDialog(
+                  vesselId: widget.vesselId,
+                  certificateType: 'License',
+                ),
+                  ).then((result) {
+                if (result == true) {
+                  // Refresh vessel data after adding crew member
+                  _loadVesselData();
+                }
+              });
+              },
+          ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStep5Tab() {
     // Step 5: Officers & Crew (HIGHLIGHTED)
     final data = _vesselData ?? widget.vesselData;
@@ -1017,6 +1172,28 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
             ],
           ),
         ),
+          const SizedBox(height: 12),
+          // Add Crew Button - Unified button to add crew with certificate type selection
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: ElevatedButton.icon(
+              onPressed: _showAddCrewDialog,
+              icon: const Icon(Icons.person_add, size: 20),
+              label: const Text(
+                'Add Crew',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.teal,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
         Expanded(
           child: Column(
             children: [
@@ -1260,12 +1437,12 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: InkWell(
-                          onTap: () {
+                              onTap: () {
                             final fileUrl = member['certificateFileUrl'] ?? 
                                            member['fileUrl'] ?? 
                                            member['seafarerIdFileUrl'];
                             _viewFile(fileUrl);
-                          },
+                            },
                           child: Text(
                             'View Document',
                             style: TextStyle(
@@ -1293,7 +1470,7 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                           } else {
                             _updateCertificate(member, 'license');
                           }
-                        },
+                          },
                         icon: const Icon(Icons.update, size: 18),
                         label: Text(
                           statusText == 'Expired' ? 'Renew' : 'Update',
@@ -1362,6 +1539,63 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPsscCard({
+    required String authorizedCrew,
+    required String othersNumber,
+    required String passengerAccommodation,
+  }) {
+    // Calculate total: Authorized Crew + Others
+    int? authorizedCrewInt = int.tryParse(authorizedCrew);
+    int? othersNumberInt = int.tryParse(othersNumber);
+    final total = (authorizedCrewInt ?? 0) + (othersNumberInt ?? 0);
+    final totalString = total > 0 ? total.toString() : 'N/A';
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            _buildInfoRow('Passenger with Accommodation', passengerAccommodation),
+            _buildPsscRow('Authorized Crew', authorizedCrew, isHighlighted: true),
+            _buildPsscRow('Others (Support)', othersNumber, isHighlighted: true),
+            const Divider(height: 24, thickness: 1),
+            _buildPsscRow('TOTAL', totalString, isHighlighted: true, isTotal: true),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPsscRow(String label, String value, {bool isHighlighted = false, bool isTotal = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: isTotal ? 4 : 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: isTotal ? 16 : 14,
+                fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+                color: isHighlighted ? Colors.green[700] : Colors.grey[700],
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isTotal ? 18 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+              color: isHighlighted ? Colors.green[700] : Colors.black87,
             ),
           ),
         ],

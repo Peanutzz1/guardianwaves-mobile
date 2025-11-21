@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/vessels_screen.dart';
 import '../screens/documents_screen.dart';
@@ -17,6 +18,69 @@ class MainNavigation extends StatefulWidget {
 }
 
 class _MainNavigationState extends State<MainNavigation> {
+  bool _hasCheckedGoogleSignIn = false;
+  bool _isGoogleSignInUser = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    _checkGoogleSignInStatus();
+  }
+  
+  Future<void> _checkGoogleSignInStatus() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final user = authProvider.user;
+    
+    if (user != null && user['uid'] != null && user['email'] != null) {
+      // If createdBy is already set, use it
+      if (user['createdBy'] == 'google-signin') {
+        setState(() {
+          _isGoogleSignInUser = true;
+          _hasCheckedGoogleSignIn = true;
+        });
+        return;
+      }
+      
+      // Otherwise, check Firestore
+      try {
+        final role = user['role'] ?? 'client';
+        final collection = (role == 'admin' || role == 'super_admin') ? 'users' : 'client';
+        final userRef = FirebaseFirestore.instance
+            .collection(collection)
+            .doc(user['uid']);
+        final userDoc = await userRef.get();
+        
+        if (userDoc.exists) {
+          final userData = userDoc.data()!;
+          final createdBy = userData['createdBy'];
+          
+          if (createdBy == 'google-signin') {
+            setState(() {
+              _isGoogleSignInUser = true;
+              _hasCheckedGoogleSignIn = true;
+            });
+            // Refresh user data to update auth provider
+            await authProvider.refreshUserData();
+            print('✅ MainNavigation: Detected Google sign-in user, refreshed auth provider');
+          } else {
+            setState(() {
+              _isGoogleSignInUser = false;
+              _hasCheckedGoogleSignIn = true;
+            });
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error checking Google sign-in status in MainNavigation: $e');
+        setState(() {
+          _hasCheckedGoogleSignIn = true;
+        });
+      }
+    } else {
+      setState(() {
+        _hasCheckedGoogleSignIn = true;
+      });
+    }
+  }
   int _currentIndex = 0;
 
   bool _isAdmin(AuthProvider authProvider) {
@@ -102,7 +166,27 @@ class _MainNavigationState extends State<MainNavigation> {
       builder: (context, authProvider, child) {
         // SAFETY GUARD: Check if OTP verification is required
         // This prevents access even if main.dart check is bypassed
-        if (authProvider.requiresOTPVerification) {
+        // EXCEPTION: Google sign-in users never need OTP verification
+        final user = authProvider.user;
+        final createdBy = user?['createdBy'];
+        final otpVerified = user?['otpVerified'];
+        final accountStatus = user?['accountStatus'];
+        
+        // Use the checked Google sign-in status from initState
+        final isGoogleSignIn = _isGoogleSignInUser || createdBy == 'google-signin';
+        final isAlreadyVerified = otpVerified == true && accountStatus == 'active';
+        
+        print('🔍 MainNavigation OTP check:');
+        print('   - createdBy: $createdBy');
+        print('   - _isGoogleSignInUser: $_isGoogleSignInUser');
+        print('   - otpVerified: $otpVerified');
+        print('   - accountStatus: $accountStatus');
+        print('   - isGoogleSignIn: $isGoogleSignIn');
+        print('   - isAlreadyVerified: $isAlreadyVerified');
+        print('   - requiresOTPVerification: ${authProvider.requiresOTPVerification}');
+        
+        // Skip OTP for Google sign-in users or already verified users
+        if (!isGoogleSignIn && !isAlreadyVerified && authProvider.requiresOTPVerification) {
           final email = authProvider.user?['email'] ?? '';
           if (email.isNotEmpty) {
             print('🔒 MainNavigation: OTP verification required - redirecting to verify-otp');

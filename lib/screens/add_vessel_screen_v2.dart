@@ -22,8 +22,10 @@ import 'manning_requirements_screen.dart';
 class AddVesselScreenV2 extends StatefulWidget {
   final String? vesselId;
   final Map<String, dynamic>? vesselData;
+  final int? initialStep; // Optional initial step to start at
+  final int? initialCrewTabIndex; // Optional crew tab index for Step 5
 
-  const AddVesselScreenV2({super.key, this.vesselId, this.vesselData});
+  const AddVesselScreenV2({super.key, this.vesselId, this.vesselData, this.initialStep, this.initialCrewTabIndex});
 
   @override
   State<AddVesselScreenV2> createState() => _AddVesselScreenV2State();
@@ -57,6 +59,14 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
   @override
   void initState() {
     super.initState();
+
+    // Set initial step if provided
+    if (widget.initialStep != null) {
+      _currentStep = widget.initialStep!;
+    }
+    if (widget.initialCrewTabIndex != null) {
+      _crewTabIndex = widget.initialCrewTabIndex!;
+    }
 
     // Initialize cached dropdown items once
     _vesselTypeItems = [
@@ -327,7 +337,11 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     'CHIEF ENGINEER',
     'MAJOR PATRON',
     'MINOR PATRON',
+    'MARINE DIESEL MECHANIC 2',
     'MARINE DIESEL MECHANIC 1',
+    'MARINE ENGINE MECHANIC 3',
+    'MARINE ENGINE MECHANIC 2',
+    'MARINE ENGINE MECHANIC 1',
     'MOTORMAN',
     'MASTER MARINER',
     'OIC-NAVIGATIONAL WATCH',
@@ -1703,25 +1717,6 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     await prefs.remove(_draftStorageKey);
   }
 
-  Future<void> _selectYearBuilt() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(1800),
-      lastDate: DateTime.now(),
-      helpText: 'Select Year Built',
-      fieldLabelText: 'Year Built',
-      fieldHintText: 'DD/MM/YYYY',
-    );
-    if (picked != null) {
-      setState(() {
-        final month = picked.month.toString().padLeft(2, '0');
-        final day = picked.day.toString().padLeft(2, '0');
-        _yearBuiltController.text =
-            "${picked.day}/${picked.month}/${picked.year}";
-      });
-    }
-  }
 
   // Deck Department Methods
   void _addDeckEntry(Map<String, String> newEntry) {
@@ -2081,7 +2076,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
         if (existingVessels.docs.isNotEmpty) {
           _showErrorDialog(
             'Vessel Already Exists',
-            'A vessel with IMO number ${_imoNumberController.text.trim()} already exists.',
+            'A vessel with official number ${_imoNumberController.text.trim()} already exists.',
           );
           return;
         }
@@ -2750,6 +2745,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
         currentStep: _currentStep,
         onStepContinue: _continue,
         onStepCancel: _cancel,
+        onStepTapped: _onStepTapped,
         controlsBuilder: (context, details) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -2844,20 +2840,18 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               ),
             ),
             const SizedBox(height: 16),
-            // IMO Number - Max 7 digits
+            // Official Number - Numbers only
             TextFormField(
               controller: _imoNumberController,
               decoration: InputDecoration(
-                labelText: 'IMO Number *',
+                labelText: 'Official Number *',
                 prefixIcon: const Icon(Icons.tag),
                 border: const OutlineInputBorder(),
-                helperText: "Enter 7-digit IMO number or 'NA'/'N.A'",
                 errorText: _imoError,
               ),
-              keyboardType: TextInputType.text,
+              keyboardType: TextInputType.number,
               inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9A-Za-z. \-]')),
-                LengthLimitingTextInputFormatter(7),
+                FilteringTextInputFormatter.digitsOnly,
               ],
             ),
             const SizedBox(height: 16),
@@ -3006,7 +3000,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               ),
             ),
             const SizedBox(height: 16),
-            // Year Built - Date Picker
+            // Year Built - Manual input
             TextFormField(
               controller: _yearBuiltController,
               decoration: InputDecoration(
@@ -3014,10 +3008,13 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 prefixIcon: const Icon(Icons.calendar_today),
                 border: const OutlineInputBorder(),
                 errorText: _yearBuiltError,
-                helperText: 'Tap to select year',
+                helperText: 'Enter year (1970 to present)',
               ),
-              readOnly: true,
-              onTap: _selectYearBuilt,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(4),
+              ],
             ),
             const SizedBox(height: 16),
             // Builder - Auto uppercase
@@ -4068,6 +4065,27 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
             ),
           ),
           const SizedBox(height: 12),
+          // Add Crew Button - Unified button to add crew with certificate type selection
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: ElevatedButton.icon(
+              onPressed: _showAddCrewDialog,
+              icon: const Icon(Icons.person_add, size: 20),
+              label: const Text(
+                'Add Crew',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.teal,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           // Filter Tabs
           Container(
             color: Colors.grey[200],
@@ -4323,6 +4341,83 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
           ),
         ),
       ],
+    );
+  }
+
+  // Show dialog to select certificate type when adding crew
+  void _showAddCrewDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          'Add Crew Member',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Select the certificate type for this crew member:',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          // SIRB option
+          ListTile(
+            leading: Icon(Icons.badge, color: Colors.blue.shade700),
+            title: const Text('SIRB', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+              'Seafarer Identification and Record Book (${_sirbMembers.length})',
+              style: const TextStyle(fontSize: 12),
+            ),
+            trailing: Icon(Icons.arrow_forward_ios, size: 16, color: Colors.blue.shade700),
+            onTap: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _crewTabIndex = 0; // Switch to SIRB tab
+                _addSirbMember();
+              });
+            },
+          ),
+          const Divider(),
+          // COC option
+          ListTile(
+            leading: Icon(Icons.card_membership, color: Colors.green.shade700),
+            title: const Text('COC', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+              'Certificate of Competency (${_competencyCertificates.length})',
+              style: const TextStyle(fontSize: 12),
+            ),
+            trailing: Icon(Icons.arrow_forward_ios, size: 16, color: Colors.green.shade700),
+            onTap: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _crewTabIndex = 1; // Switch to COC tab
+                _addCompetencyCertificate();
+              });
+            },
+          ),
+          const Divider(),
+          // License option
+          ListTile(
+            leading: Icon(Icons.verified, color: Colors.orange.shade700),
+            title: const Text('License', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+              'License Certificate (${_competencyLicenses.length})',
+              style: const TextStyle(fontSize: 12),
+            ),
+            trailing: Icon(Icons.arrow_forward_ios, size: 16, color: Colors.orange.shade700),
+            onTap: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _crewTabIndex = 2; // Switch to License tab
+                _addCompetencyLicense();
+              });
+            },
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -5498,25 +5593,16 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
       hasErrors = true;
     }
 
-    // 3. IMO Number - Required, exactly 7 digits only or "NA"/"N.A"
+    // 3. Official Number - Required, numbers only
     final imo = _imoNumberController.text.trim();
     if (imo.isEmpty) {
-      imoError = 'IMO number is required';
+      imoError = 'Official number is required';
       hasErrors = true;
     } else {
-      final imoUpper = imo.toUpperCase();
-      if (imoUpper == 'NA' || imoUpper == 'N.A' || imoUpper == 'N.A.') {
-        // Valid - NA is allowed
-      } else if (imo.length != 7) {
-        imoError = 'IMO number must be exactly 7 characters';
+      // Check if it contains only digits
+      if (!RegExp(r'^[0-9]+$').hasMatch(imo)) {
+        imoError = 'Official number must contain only numbers';
         hasErrors = true;
-      } else {
-        // Check if it's all digits
-        final imoDigits = imo.replaceAll(RegExp(r'[^0-9]'), '');
-        if (imoDigits.length != 7) {
-          imoError = 'IMO number must be exactly 7 digits';
-          hasErrors = true;
-        }
       }
     }
 
@@ -5639,32 +5725,22 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
       hasErrors = true;
     }
 
-    // 5. Year Built - Required, not future, not before 1800
+    // 5. Year Built - Required, not future, not before 1970
     final yearBuilt = _yearBuiltController.text.trim();
     if (yearBuilt.isEmpty) {
       yearBuiltError = 'Year built is required';
       hasErrors = true;
     } else {
-      // Extract year from date string (DD/MM/YYYY format)
-      int? year;
-      if (yearBuilt.contains('/')) {
-        // Date format: DD/MM/YYYY
-        final parts = yearBuilt.split('/');
-        if (parts.length == 3) {
-          year = int.tryParse(parts[2]); // Get year (last part)
-        }
-      } else {
-        // Just year format
-        year = int.tryParse(yearBuilt);
-      }
+      // Just year format (manual input)
+      final year = int.tryParse(yearBuilt);
 
       if (year == null) {
         yearBuiltError = 'Year built must be a valid year';
         hasErrors = true;
       } else {
         final currentYear = DateTime.now().year;
-        if (year < 1800) {
-          yearBuiltError = 'Year built cannot be before 1800';
+        if (year < 1970) {
+          yearBuiltError = 'Year built cannot be before 1970';
           hasErrors = true;
         } else if (year > currentYear) {
           yearBuiltError = 'Year built cannot be in the future';
@@ -6040,6 +6116,16 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
       });
     }
   }
+
+  void _onStepTapped(int step) {
+      setState(() {
+        _currentStep = step;
+        if (_currentStep < 2) {
+          _shouldLaunchManningEditor = false;
+        }
+      });
+    }
+
 
   /// Helper method to find matching position value, handling case differences
   /// Returns the exact position from _positions list if found (case-insensitive match)

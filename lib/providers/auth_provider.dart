@@ -19,15 +19,77 @@ class AuthProvider with ChangeNotifier {
   // Check if current user requires OTP verification
   bool get requiresOTPVerification {
     if (_user == null) return false;
+    
+    // Google sign-in users never need OTP verification
+    final createdBy = _user!['createdBy'];
+    if (createdBy == 'google-signin') {
+      print('✅ Google sign-in user detected (from user data) - skipping OTP verification');
+      return false;
+    }
+    
+    // Additional check: If user is already verified and active, no OTP needed
+    final accountStatus = _user!['accountStatus'] ?? 'active';
+    final otpVerified = _user!['otpVerified'];
+    if (otpVerified == true && accountStatus == 'active') {
+      return false;
+    }
+    
     final role = _user!['role'];
     if (role == 'admin' || role == 'super_admin') {
       return false;
     }
-    final accountStatus = _user!['accountStatus'] ?? 'active';
-    final otpVerified = _user!['otpVerified'];
+    
     return accountStatus == 'pending-verification' ||
         otpVerified == false ||
         otpVerified == null;
+  }
+  
+  // Async method to check if user is Google sign-in by querying Firestore directly
+  Future<bool> isGoogleSignInUser() async {
+    if (_user == null || _user!['uid'] == null || _user!['email'] == null) {
+      return false;
+    }
+    
+    try {
+      // Check if createdBy is already in user data
+      if (_user!['createdBy'] == 'google-signin') {
+        return true;
+      }
+      
+      // Query Firestore directly to check createdBy
+      final role = _user!['role'] ?? 'client';
+      final collection = (role == 'admin' || role == 'super_admin') ? 'users' : 'client';
+      
+      final userRef = FirebaseFirestore.instance
+          .collection(collection)
+          .doc(_user!['uid']);
+      
+      final userDoc = await userRef.get();
+      
+      if (userDoc.exists) {
+        final userData = userDoc.data()!;
+        final createdBy = userData['createdBy'];
+        
+        if (createdBy == 'google-signin') {
+          // Update local user data
+          _user = {
+            ..._user!,
+            'createdBy': 'google-signin',
+            'otpVerified': true,
+            'emailVerified': true,
+            'accountStatus': 'active',
+          };
+          await _storeUser(_user!);
+          notifyListeners();
+          print('✅ Google sign-in user detected (from Firestore) - updated user data');
+          return true;
+        }
+      }
+    } catch (error) {
+      print('❌ Error checking Google sign-in status: $error');
+    }
+    
+    return false;
   }
 
   AuthProvider() {
@@ -42,6 +104,7 @@ class AuthProvider with ChangeNotifier {
       final role = prefs.getString('guardianwaves_user_role');
       final username = prefs.getString('guardianwaves_user_username');
       final photoUrl = prefs.getString('guardianwaves_user_photoUrl');
+      final createdBy = prefs.getString('guardianwaves_user_createdBy');
 
       if (uid != null && email != null) {
         // Load basic user data from SharedPreferences
@@ -51,17 +114,33 @@ class AuthProvider with ChangeNotifier {
           'role': role ?? 'client',
           'username': username ?? email,
           if (photoUrl != null) 'photoUrl': photoUrl,
+          if (createdBy != null) 'createdBy': createdBy,
         };
 
         // CRITICAL: Refresh user data from Firestore to get latest OTP verification status
         // This ensures we don't allow access to accounts that haven't verified OTP
+        // BUT: For Google sign-in users, don't refresh immediately to avoid overwriting correct values
         print(
           '🔄 Restored user session: $email - refreshing from Firestore to check OTP status',
         );
+        print('   - Stored createdBy: $createdBy');
+        
+        // If this is a Google sign-in user, set verified status immediately
+        if (createdBy == 'google-signin') {
+          _user = {
+            ..._user!,
+            'otpVerified': true,
+            'emailVerified': true,
+            'accountStatus': 'active',
+            'createdBy': 'google-signin',
+          };
+          print('✅ Google sign-in user - setting verified status immediately');
+        }
+        
         try {
           await refreshUserData();
           print(
-            '✅ User data refreshed - OTP status: ${_user?['otpVerified']}, Account status: ${_user?['accountStatus']}',
+            '✅ User data refreshed - OTP status: ${_user?['otpVerified']}, Account status: ${_user?['accountStatus']}, createdBy: ${_user?['createdBy']}',
           );
         } catch (refreshError) {
           print('⚠️ Failed to refresh user data from Firestore: $refreshError');
@@ -91,6 +170,13 @@ class AuthProvider with ChangeNotifier {
         await prefs.setString(
           'guardianwaves_user_photoUrl',
           userData['photoUrl'],
+        );
+      }
+      // Store createdBy to identify Google sign-in users
+      if (userData['createdBy'] != null) {
+        await prefs.setString(
+          'guardianwaves_user_createdBy',
+          userData['createdBy'],
         );
       }
     } catch (error) {
@@ -275,6 +361,7 @@ class AuthProvider with ChangeNotifier {
       await prefs.remove('guardianwaves_user_role');
       await prefs.remove('guardianwaves_user_username');
       await prefs.remove('guardianwaves_user_photoUrl');
+      await prefs.remove('guardianwaves_user_createdBy');
       notifyListeners();
       print('👋 User signed out successfully');
     } catch (e) {
@@ -364,12 +451,14 @@ class AuthProvider with ChangeNotifier {
         // Delete OTP after successful verification
         await OTPService.deleteOTP(email);
 
-        // Update local user state
+        // Update local user state (preserve createdBy)
         _user = {
           ..._user!,
           'otpVerified': true,
           'emailVerified': true,
           'accountStatus': 'active',
+          // Preserve createdBy if it exists
+          if (_user!['createdBy'] != null) 'createdBy': _user!['createdBy'],
         };
         await _storeUser(_user!);
         notifyListeners();
@@ -431,6 +520,9 @@ class AuthProvider with ChangeNotifier {
           ? 'users'
           : 'client';
 
+      // Preserve existing createdBy before refresh
+      final existingCreatedBy = _user!['createdBy'];
+
       final userRef = FirebaseFirestore.instance
           .collection(collection)
           .doc(_user!['uid']);
@@ -451,26 +543,50 @@ class AuthProvider with ChangeNotifier {
             'otpVerified': true, // Admins don't need OTP
             'emailVerified': true, // Admins don't need email verification
             if (userData['photoUrl'] != null) 'photoUrl': userData['photoUrl'],
+            // Preserve createdBy - use Firestore value or existing value
+            'createdBy': userData['createdBy'] ?? existingCreatedBy,
           };
         } else {
-          // Client users - check OTP status
+          // Client users - IMPORTANT: For Google sign-in users, ensure they're marked as verified
+          final createdBy = userData['createdBy'] ?? existingCreatedBy;
+          final isGoogleSignIn = createdBy == 'google-signin';
+          
+          // If Google sign-in user, force verified status
+          final accountStatus = isGoogleSignIn 
+              ? 'active' 
+              : (userData['accountStatus'] ?? 'active');
+          final otpVerified = isGoogleSignIn 
+              ? true 
+              : (userData['otpVerified'] ?? true);
+          
           _user = {
             'uid': userDoc.id,
             'email': userData['email'],
             'role': 'client',
             'username': userData['username'] ?? userData['email'],
-            'accountStatus': userData['accountStatus'] ?? 'active',
-            'otpVerified':
-                userData['otpVerified'] ??
-                true, // Default to true for existing users
-            'emailVerified': userData['emailVerified'] ?? false,
+            'accountStatus': accountStatus,
+            'otpVerified': otpVerified,
+            'emailVerified': isGoogleSignIn ? true : (userData['emailVerified'] ?? false),
             if (userData['photoUrl'] != null) 'photoUrl': userData['photoUrl'],
+            // Always preserve createdBy
+            'createdBy': createdBy,
           };
+          
+          // If this is a Google sign-in user but Firestore doesn't have the correct status, update it
+          if (isGoogleSignIn && (userData['otpVerified'] != true || userData['accountStatus'] != 'active')) {
+            print('🔄 Updating Google sign-in user status in Firestore');
+            await userRef.update({
+              'otpVerified': true,
+              'emailVerified': true,
+              'accountStatus': 'active',
+              'lastUpdated': DateTime.now().toIso8601String(),
+            });
+          }
         }
 
         await _storeUser(_user!);
         notifyListeners();
-        print('✅ User data refreshed from Firestore');
+        print('✅ User data refreshed from Firestore - createdBy: ${_user!['createdBy']}');
       } else {
         print(
           '⚠️ User document not found in Firestore - may have been deleted',

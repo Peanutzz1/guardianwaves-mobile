@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/auth_provider.dart';
 import '../services/otp_service.dart';
 import '../widgets/main_navigation.dart';
@@ -39,53 +40,102 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
   @override
   void initState() {
     super.initState();
-    // Auto-send OTP when component mounts (only once)
-    // Check if user is already verified and if valid OTP already exists before sending a new one
+    // CRITICAL: Check if user is Google sign-in BEFORE doing anything else
+    // Google sign-in users should never see this screen or receive OTP
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!_hasSentOTP) {
-        _hasSentOTP = true;
-        print('📧 Checking if OTP should be sent for: ${widget.email}');
+      if (!mounted) return;
+      
+      print('📧 VerifyOTPScreen: Checking if user is Google sign-in for: ${widget.email}');
+      
+      // Check Firestore FIRST to see if user was created via Google sign-in
+      try {
+        final firestore = FirebaseFirestore.instance;
+        final clientSnapshot = await firestore
+            .collection('client')
+            .where('email', isEqualTo: widget.email.toLowerCase())
+            .limit(1)
+            .get();
         
-        // CRITICAL: Check if user is already verified - don't send OTP for verified accounts
-        final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        final user = authProvider.user;
-        
-        if (user != null) {
-          final otpVerified = user['otpVerified'];
-          final accountStatus = user['accountStatus'];
+        if (clientSnapshot.docs.isNotEmpty) {
+          final userData = clientSnapshot.docs.first.data();
+          final createdBy = userData['createdBy'];
           
-          // If user is already verified, don't send OTP
-          if (otpVerified == true && accountStatus == 'active') {
-            print('✅ User is already verified - not sending OTP');
-            print('   - otpVerified: $otpVerified');
-            print('   - accountStatus: $accountStatus');
-            setState(() {
-              _message = 'Your account is already verified. Redirecting...';
-            });
-            // Redirect to dashboard after a short delay
-            Future.delayed(const Duration(seconds: 1), () {
-              if (mounted) {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (context) => const MainNavigation()),
-                );
-              }
-            });
+          // CRITICAL: Google sign-in users never need OTP verification - redirect immediately
+          if (createdBy == 'google-signin') {
+            print('✅ User created via Google sign-in - redirecting immediately (NO OTP)');
+            print('   - createdBy: $createdBy');
+            
+            // Force refresh user data to update auth provider
+            final authProvider = Provider.of<AuthProvider>(context, listen: false);
+            await authProvider.refreshUserData();
+            print('✅ Refreshed auth provider user data');
+            
+            // Redirect immediately - don't send OTP, don't show screen
+            if (mounted) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const MainNavigation()),
+              );
+            }
             return;
           }
         }
+      } catch (e) {
+        print('⚠️ Error checking Firestore for user creation method: $e');
+      }
+      
+      // Check auth provider user data as fallback
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final user = authProvider.user;
+      
+      if (user != null) {
+        final createdBy = user['createdBy'];
+        
+        // CRITICAL: Google sign-in users never need OTP verification
+        if (createdBy == 'google-signin') {
+          print('✅ User created via Google sign-in (from auth provider) - redirecting immediately (NO OTP)');
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const MainNavigation()),
+            );
+          }
+          return;
+        }
+        
+        // If user is already verified, don't send OTP
+        final otpVerified = user['otpVerified'];
+        final accountStatus = user['accountStatus'];
+        if (otpVerified == true && accountStatus == 'active') {
+          print('✅ User is already verified - redirecting (NO OTP)');
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const MainNavigation()),
+            );
+          }
+          return;
+        }
+      }
+      
+      // Only send OTP for manual sign-up users (NOT Google sign-in)
+      if (!_hasSentOTP && mounted) {
+        _hasSentOTP = true;
+        print('📧 Sending OTP for manual sign-up user: ${widget.email}');
         
         // Check if a valid OTP already exists in Firestore
         final hasValidOTP = await OTPService.hasValidOTP(widget.email);
         
         if (hasValidOTP) {
           print('✅ Valid OTP already exists - not sending duplicate');
-          setState(() {
-            _message = 'Verification code sent to ${widget.email}. Please check your email.';
-          });
-          _startCooldown();
+          if (mounted) {
+            setState(() {
+              _message = 'Verification code sent to ${widget.email}. Please check your email.';
+            });
+            _startCooldown();
+          }
         } else {
           print('📧 No valid OTP found - sending new OTP for: ${widget.email}');
-          _sendOTP();
+          if (mounted) {
+            _sendOTP();
+          }
         }
       }
     });
