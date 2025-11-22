@@ -26,8 +26,9 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
   final OCRService _ocrService = OCRService();
   final DataExtractionService _dataExtractionService = DataExtractionService();
   
-  XFile? _selectedImage;
-  File? _imageFile;
+  // Changed to support multiple photos (2-3)
+  List<XFile> _selectedImages = [];
+  List<File> _imageFiles = [];
   bool _isScanning = false;
   bool _isUploading = false;
   bool _isSaving = false;
@@ -41,18 +42,61 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
   DateTime? _selectedDateIssued;
   DateTime? _selectedDateExpiry;
 
+  // Position list for SIRB and COC (Certificate of Competency)
+  static const List<String> _positionList = [
+    'MASTER',
+    'CHIEF OFFICER',
+    'DECK OFFICER',
+    '2ND OFFICER',
+    '3RD OFFICER',
+    'CHIEF ENGINEER',
+    '2ND MARINE ENGINEER',
+    '3RD MARINE ENGINEER',
+    '4TH MARINE ENGINEER',
+    'ABLE SEAMAN',
+    'OILER',
+    'BOSUN',
+    'ORDINARY SEAMAN',
+    'RADIO OPERATOR',
+    'CRANE OPERATOR',
+    'DECK CADET',
+    'ENGINE CADET',
+    'APPRENTICE MATE',
+    'CHIEF COOK',
+  ];
+
+  // License types list
+  static const List<String> _licenseTypes = [
+    '2ND MATE',
+    '2ND MARINE ENGINEER',
+    '3RD MATE',
+    '3RD MARINE ENGINEER',
+    '4TH MARINE ENGINEER',
+    'BOAT CAPTAIN 2',
+    'BOAT CAPTAIN 1',
+    'CHIEF MATE',
+    'CHIEF ENGINEER',
+    'MAJOR PATRON',
+    'MINOR PATRON',
+    'MARINE DIESEL MECHANIC 2',
+    'MARINE DIESEL MECHANIC 1',
+    'MARINE ENGINE MECHANIC 3',
+    'MARINE ENGINE MECHANIC 2',
+    'MARINE ENGINE MECHANIC 1',
+    'MOTORMAN',
+    'MASTER MARINER',
+    'OIC-NAVIGATIONAL WATCH',
+    'OIC-ENGINEERING WATCH',
+  ];
+
   @override
   void initState() {
     super.initState();
     
     // Set default certificate type based on widget.certificateType
-    if (widget.certificateType == 'SIRB') {
-      _certificateTypeController.text = 'SIRB';
-    } else if (widget.certificateType == 'COC') {
-      _certificateTypeController.text = ''; // User will enter position (e.g., "MASTER", "CHIEF OFFICER")
-    } else if (widget.certificateType == 'License') {
-      _certificateTypeController.text = ''; // User will enter license type
-    }
+    // For SIRB and COC, leave empty for position selection
+    // For License, leave empty for license type selection
+    _certificateTypeController.text = '';
   }
 
   @override
@@ -120,12 +164,65 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final pickedFile = await _imagePicker.pickImage(source: source);
-      if (pickedFile != null) {
-        setState(() {
-          _selectedImage = pickedFile;
-          _imageFile = File(pickedFile.path);
-        });
+      final int remainingSlots = 3 - _selectedImages.length;
+      if (remainingSlots <= 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Maximum 3 photos allowed'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (source == ImageSource.gallery) {
+        // Allow picking multiple images from gallery
+        final List<XFile> images = await _imagePicker.pickMultiImage(
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (images.isNotEmpty) {
+          final int totalPhotos = _selectedImages.length + images.length;
+          if (totalPhotos > 3) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('You can only add ${3 - _selectedImages.length} more photo(s)'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+            // Take only the allowed number
+            setState(() {
+              _selectedImages.addAll(images.take(3 - _selectedImages.length));
+              _imageFiles.addAll(images.take(3 - _selectedImages.length).map((img) => File(img.path)));
+            });
+          } else {
+            setState(() {
+              _selectedImages.addAll(images);
+              _imageFiles.addAll(images.map((img) => File(img.path)));
+            });
+          }
+        }
+      } else {
+        // Camera - single image
+        final XFile? image = await _imagePicker.pickImage(
+          source: source,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (image != null) {
+          setState(() {
+            _selectedImages.add(image);
+            _imageFiles.add(File(image.path));
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -136,10 +233,17 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
     }
   }
 
+  void _removePhoto(int index) {
+    setState(() {
+      _selectedImages.removeAt(index);
+      _imageFiles.removeAt(index);
+    });
+  }
+
   Future<void> _scanCertificate() async {
-    if (_imageFile == null) {
+    if (_imageFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select an image first')),
+        const SnackBar(content: Text('Please select at least one image first')),
       );
       return;
     }
@@ -147,7 +251,8 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
     setState(() => _isScanning = true);
 
     try {
-      final result = await _ocrService.recognizeText(_imageFile!.path);
+      // Scan the first image
+      final result = await _ocrService.recognizeText(_imageFiles[0].path);
       final extractedText = result['text'] as String;
 
       if (extractedText.isEmpty) {
@@ -166,6 +271,10 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
         setState(() {
           if (extractedData['name'] != null) {
             _nameController.text = extractedData['name']!;
+          }
+          // For SIRB, extract position if available
+          if (extractedData['position'] != null) {
+            _certificateTypeController.text = extractedData['position']!;
           }
           if (extractedData['dateIssued'] != null) {
             _selectedDateIssued = _parseDateString(extractedData['dateIssued']!);
@@ -213,11 +322,13 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
           if (extractedData['name'] != null) {
             _nameController.text = extractedData['name']!;
           }
-          // For License, try to extract license type from position field or certificate type
-          if (extractedData['position'] != null) {
-            _certificateTypeController.text = extractedData['position']!;
+          // For License, try to extract license type from licenseType, certificateType, or position field
+          if (extractedData['licenseType'] != null) {
+            _certificateTypeController.text = extractedData['licenseType']!;
           } else if (extractedData['certificateType'] != null) {
             _certificateTypeController.text = extractedData['certificateType']!;
+          } else if (extractedData['position'] != null) {
+            _certificateTypeController.text = extractedData['position']!;
           }
           if (extractedData['dateIssued'] != null) {
             _selectedDateIssued = _parseDateString(extractedData['dateIssued']!);
@@ -262,7 +373,7 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
   String _getCertificateTypeLabel() {
     switch (widget.certificateType) {
       case 'SIRB':
-        return 'Certificate Type';
+        return 'Position *';
       case 'COC':
         return 'Position *';
       case 'License':
@@ -319,9 +430,12 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
       return;
     }
 
-    if (widget.certificateType != 'SIRB' && _certificateTypeController.text.trim().isEmpty) {
+    if (_certificateTypeController.text.trim().isEmpty) {
+      final fieldName = widget.certificateType == 'License' 
+          ? 'license type' 
+          : 'position';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please enter ${_getCertificateTypeLabel().replaceAll('*', '').trim()}')),
+        SnackBar(content: Text('Please select $fieldName')),
       );
       return;
     }
@@ -340,18 +454,31 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
       return;
     }
 
+    if (_imageFiles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please upload at least one certificate file'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
 
     try {
-      String? fileUrl;
+      List<String> fileUrls = [];
       
-      // Upload image if selected
-      if (_imageFile != null) {
+      // Upload all images if selected
+      if (_imageFiles.isNotEmpty) {
         setState(() => _isUploading = true);
-        fileUrl = await CloudinaryService.uploadCertificate(
-          file: _imageFile!,
-          vesselId: widget.vesselId,
-        );
+        for (var imageFile in _imageFiles) {
+          final fileUrl = await CloudinaryService.uploadCertificate(
+            file: imageFile,
+            vesselId: widget.vesselId,
+          );
+          fileUrls.add(fileUrl);
+        }
         setState(() => _isUploading = false);
       }
 
@@ -365,7 +492,7 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
         dateIssuedFormatted,
         dateExpiryFormatted,
         certificateStatus,
-        fileUrl ?? '',
+        fileUrls,
       );
 
       if (mounted) {
@@ -395,8 +522,10 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
     String dateIssued,
     String dateExpiry,
     String status,
-    String fileUrl,
+    List<String> fileUrls,
   ) async {
+    // For backward compatibility, use first URL as primary
+    final String primaryFileUrl = fileUrls.isNotEmpty ? fileUrls[0] : '';
     final vesselDoc = await FirebaseFirestore.instance
         .collection('vessels')
         .doc(widget.vesselId)
@@ -418,16 +547,18 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
       'remarks': status,
     };
 
-    if (fileUrl.isNotEmpty) {
-      newMember['fileUrl'] = fileUrl;
-      newMember['certificateFileUrl'] = fileUrl;
+    if (primaryFileUrl.isNotEmpty) {
+      newMember['fileUrl'] = primaryFileUrl;
+      newMember['certificateFileUrl'] = primaryFileUrl;
+      newMember['photoUrls'] = fileUrls; // Store all photo URLs
       
       if (widget.certificateType == 'SIRB') {
-        newMember['seafarerIdFileUrl'] = fileUrl;
+        newMember['seafarerIdFileUrl'] = primaryFileUrl;
       }
     }
 
     if (widget.certificateType == 'SIRB') {
+      newMember['position'] = _certificateTypeController.text.trim(); // Position for SIRB
       newMember['seafarerIdExpiry'] = dateExpiry;
       
       final officersCrew = List<Map<String, dynamic>>.from(
@@ -532,7 +663,7 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
                   children: [
                     // Upload Certificate File
                     const Text(
-                      'Upload Certificate File',
+                      'Upload Certificate File (Max 3)',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -540,32 +671,132 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    
+                    // Photo counter
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _pickImage(ImageSource.camera),
-                            icon: const Icon(Icons.camera_alt),
-                            label: const Text('Capture'),
+                        const Text(
+                          'Photos',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _pickImage(ImageSource.gallery),
-                            icon: const Icon(Icons.photo_library),
-                            label: const Text('Gallery'),
+                        Text(
+                          '${_selectedImages.length}/3',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
                           ),
                         ),
                       ],
                     ),
-                    if (_selectedImage != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        'Selected: ${_selectedImage!.name}',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    const SizedBox(height: 12),
+                    
+                    // Display selected photos in grid
+                    if (_selectedImages.isNotEmpty) ...[
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                          childAspectRatio: 1,
+                        ),
+                        itemCount: _selectedImages.length,
+                        itemBuilder: (context, index) {
+                          return Stack(
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.grey[300]!),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    _imageFiles[index],
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: GestureDetector(
+                                  onTap: () => _removePhoto(index),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.red,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.close,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
+                    ],
+                    
+                    // Upload buttons
+                    if (_selectedImages.length < 3) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _pickImage(ImageSource.camera),
+                              icon: const Icon(Icons.camera_alt),
+                              label: const Text('Capture'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _pickImage(ImageSource.gallery),
+                              icon: const Icon(Icons.photo_library),
+                              label: const Text('Gallery'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ] else ...[
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange[50],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Maximum 3 photos reached',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.orange[700],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    
+                    // Scan button (only show if at least one photo is selected)
+                    if (_selectedImages.isNotEmpty) ...[
+                      const SizedBox(height: 12),
                       ElevatedButton.icon(
                         onPressed: _isScanning ? null : _scanCertificate,
                         icon: _isScanning
@@ -575,7 +806,7 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.scanner),
-                        label: Text(_isScanning ? 'Scanning...' : 'Scan Certificate'),
+                        label: Text(_isScanning ? 'Scanning...' : 'Scan & Extract Data (First Photo)'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.blue,
                           foregroundColor: Colors.white,
@@ -594,20 +825,68 @@ class _AddCrewMemberDialogState extends State<AddCrewMemberDialog> {
                     ),
                     const SizedBox(height: 16),
                     // Certificate Type/Position/License Type Field
-                    TextFormField(
-                      controller: _certificateTypeController,
-                      enabled: widget.certificateType != 'SIRB',
-                      decoration: InputDecoration(
-                        labelText: _getCertificateTypeLabel(),
-                        prefixIcon: const Icon(Icons.badge),
-                        border: OutlineInputBorder(),
-                        helperText: widget.certificateType == 'COC'
-                            ? 'Enter position (e.g., MASTER, CHIEF OFFICER)'
-                            : widget.certificateType == 'License'
-                                ? 'Enter license type'
-                                : null,
-                      ),
-                    ),
+                    widget.certificateType == 'SIRB' || widget.certificateType == 'COC'
+                        ? DropdownButtonFormField<String>(
+                            value: _certificateTypeController.text.isEmpty
+                                ? null
+                                : _certificateTypeController.text,
+                            decoration: InputDecoration(
+                              labelText: _getCertificateTypeLabel(),
+                              prefixIcon: const Icon(Icons.badge),
+                              border: OutlineInputBorder(),
+                            ),
+                            isExpanded: true,
+                            items: _positionList.map((String position) {
+                              return DropdownMenuItem<String>(
+                                value: position,
+                                child: Text(
+                                  position,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (String? newValue) {
+                              setState(() {
+                                _certificateTypeController.text = newValue ?? '';
+                              });
+                            },
+                          )
+                        : widget.certificateType == 'License'
+                            ? DropdownButtonFormField<String>(
+                                value: _certificateTypeController.text.isEmpty
+                                    ? null
+                                    : _certificateTypeController.text,
+                                decoration: InputDecoration(
+                                  labelText: _getCertificateTypeLabel(),
+                                  prefixIcon: const Icon(Icons.badge),
+                                  border: OutlineInputBorder(),
+                                ),
+                                isExpanded: true,
+                                items: _licenseTypes.map((String license) {
+                                  return DropdownMenuItem<String>(
+                                    value: license,
+                                    child: Text(
+                                      license,
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (String? newValue) {
+                                  setState(() {
+                                    _certificateTypeController.text = newValue ?? '';
+                                  });
+                                },
+                              )
+                            : TextFormField(
+                                controller: _certificateTypeController,
+                                decoration: InputDecoration(
+                                  labelText: _getCertificateTypeLabel(),
+                                  prefixIcon: const Icon(Icons.badge),
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
                     const SizedBox(height: 16),
                     // Date Issued
                     TextFormField(

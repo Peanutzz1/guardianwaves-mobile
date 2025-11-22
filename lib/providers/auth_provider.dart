@@ -395,8 +395,20 @@ class AuthProvider with ChangeNotifier {
       );
 
       if (result['success'] == true) {
-        _user = result['user'];
-        await _storeUser(result['user']);
+        // Preserve critical fields (otpVerified, accountStatus, createdBy) when updating profile
+        // This prevents OTP screen from appearing after profile picture updates
+        final updatedUser = result['user'];
+        _user = {
+          ..._user!, // Preserve existing user data
+          ...updatedUser, // Apply updates (username, photoUrl)
+          // Preserve critical verification fields that shouldn't be lost
+          'otpVerified': _user!['otpVerified'],
+          'accountStatus': _user!['accountStatus'],
+          'emailVerified': _user!['emailVerified'],
+          // Preserve createdBy (important for Google sign-in users)
+          if (_user!['createdBy'] != null) 'createdBy': _user!['createdBy'],
+        };
+        await _storeUser(_user!);
         _setLoading(false);
         return true;
       } else {

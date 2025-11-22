@@ -1,8 +1,10 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../models/admin_models.dart';
+import '../providers/auth_provider.dart';
 import 'vessel_detail_screen.dart';
 
 class AdminReviewScreen extends StatefulWidget {
@@ -17,8 +19,6 @@ class _AdminReviewScreenState extends State<AdminReviewScreen> {
   String? _errorMessage;
 
   List<VesselSummary> _vessels = const [];
-  int _totalFetched = 0;
-  List<String> _debugLogs = const [];
 
   @override
   void initState() {
@@ -80,41 +80,15 @@ class _AdminReviewScreenState extends State<AdminReviewScreen> {
           return bTime.compareTo(aTime);
         });
 
-      final summaryLog =
-          'AdminReview pending=${pendingVessels.length} total=${vessels.length}';
-      debugPrint(summaryLog);
-      // ignore: avoid_print
-      print(summaryLog);
-
-      final detailLogs = vessels
-          .map(
-            (vessel) =>
-                '${vessel.name} → status=${vessel.status} '
-                'submissionStatus=${(vessel.rawData['submissionStatus'] ?? '').toString()}',
-          )
-          .toList();
-
-      for (final log in detailLogs) {
-        debugPrint('AdminReview detail: $log');
-        // ignore: avoid_print
-        print('AdminReview detail: $log');
-      }
-
       setState(() {
         _vessels = pendingVessels;
-        _totalFetched = vessels.length;
-        _debugLogs = [summaryLog, ...detailLogs];
       });
     } catch (error, stackTrace) {
-      final errorLog = 'AdminReview error: $error';
-      debugPrint(errorLog);
-      // ignore: avoid_print
-      print(errorLog);
+      debugPrint('AdminReview error: $error');
       debugPrintStack(stackTrace: stackTrace);
 
       setState(() {
         _errorMessage = 'Failed to load vessels. Please try again.';
-        _debugLogs = ['Error loading vessels: $error'];
       });
     } finally {
       if (mounted) {
@@ -147,11 +121,9 @@ class _AdminReviewScreenState extends State<AdminReviewScreen> {
                     children: [
                       _buildHeader(),
                       const SizedBox(height: 16),
-                      if (_vessels.isEmpty) ...[
-                        const _EmptyState(),
-                        const SizedBox(height: 16),
-                        _DebugLogPanel(logs: _debugLogs),
-                      ] else
+                      if (_vessels.isEmpty)
+                        const _EmptyState()
+                      else
                         ..._vessels.map(_buildVesselCard),
                     ],
                   ),
@@ -161,7 +133,7 @@ class _AdminReviewScreenState extends State<AdminReviewScreen> {
 
   Widget _buildHeader() {
     return Text(
-      'Showing ${_vessels.length} pending submissions (fetched $_totalFetched)',
+      'Showing ${_vessels.length} pending submissions',
       style: const TextStyle(
         fontSize: 16,
         fontWeight: FontWeight.w600,
@@ -344,7 +316,6 @@ class _AdminReviewScreenState extends State<AdminReviewScreen> {
             .toList();
         // Clear debug logs when approving a vessel
         if (newStatus == 'approved') {
-          _debugLogs = [];
         }
       });
     } catch (error) {
@@ -470,52 +441,6 @@ class _EmptyState extends StatelessWidget {
             style: TextStyle(
               color: Colors.grey[600],
               fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DebugLogPanel extends StatelessWidget {
-  const _DebugLogPanel({required this.logs});
-
-  final List<String> logs;
-
-  @override
-  Widget build(BuildContext context) {
-    if (logs.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Debug info',
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF0A4D68),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...logs.map(
-            (log) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                log,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[700],
-                ),
-              ),
             ),
           ),
         ],

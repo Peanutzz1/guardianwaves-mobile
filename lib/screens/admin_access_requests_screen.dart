@@ -17,6 +17,9 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
   String? _errorMessage;
 
   List<AccessRequestSummary> _requests = const [];
+  List<AccessRequestSummary> _filteredRequests = const [];
+  String _searchQuery = '';
+  String? _statusFilter; // null = all, 'pending' = pending, 'approved' = approved
 
   @override
   void initState() {
@@ -55,6 +58,7 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
 
       setState(() {
         _requests = requests;
+        _applyFilters();
       });
     } catch (error) {
       setState(() {
@@ -70,6 +74,39 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
     }
   }
 
+  void _applyFilters() {
+    _filteredRequests = _requests.where((request) {
+      // Apply status filter
+      if (_statusFilter != null) {
+        if (_statusFilter == 'pending' && !request.isPending) {
+          return false;
+        }
+        if (_statusFilter == 'approved' && !request.isApproved) {
+          return false;
+        }
+      }
+
+      // Apply search filter
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final matchesVesselName =
+            request.vesselName.toLowerCase().contains(query);
+        final matchesEmail =
+            request.requesterEmail.toLowerCase().contains(query);
+        if (!matchesVesselName && !matchesEmail) {
+          return false;
+        }
+      }
+
+      return true;
+    }).toList();
+  }
+
+  int get _pendingCount => _requests.where((r) => r.isPending).length;
+  int get _approvedCount => _requests.where((r) => r.isApproved).length;
+  int get _declinedCount => _requests.where((r) => r.isDeclined).length;
+  int get _totalCount => _requests.length;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -84,13 +121,102 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
             ? const Center(child: CircularProgressIndicator())
             : _errorMessage != null
             ? _ErrorState(message: _errorMessage!, onRetry: _loadRequests)
-            : ListView(
-                padding: const EdgeInsets.all(16),
+            : Column(
                 children: [
-                  if (_requests.isEmpty)
-                    const _EmptyState()
-                  else
-                    ..._requests.map(_buildRequestCard),
+                  // Search bar
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: TextField(
+                      decoration: InputDecoration(
+                        hintText: 'Search by vessel name or email...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  setState(() {
+                                    _searchQuery = '';
+                                    _applyFilters();
+                                  });
+                                },
+                              )
+                            : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                          _applyFilters();
+                        });
+                      },
+                    ),
+                  ),
+                  // Filter buttons
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _FilterButton(
+                            label: 'All',
+                            count: _totalCount,
+                            isSelected: _statusFilter == null,
+                            onTap: () {
+                              setState(() {
+                                _statusFilter = null;
+                                _applyFilters();
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _FilterButton(
+                            label: 'Pending',
+                            count: _pendingCount,
+                            isSelected: _statusFilter == 'pending',
+                            onTap: () {
+                              setState(() {
+                                _statusFilter = 'pending';
+                                _applyFilters();
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _FilterButton(
+                            label: 'Approved',
+                            count: _approvedCount,
+                            isSelected: _statusFilter == 'approved',
+                            onTap: () {
+                              setState(() {
+                                _statusFilter = 'approved';
+                                _applyFilters();
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Request list
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        if (_filteredRequests.isEmpty)
+                          const _EmptyState()
+                        else
+                          ..._filteredRequests.map(_buildRequestCard),
+                      ],
+                    ),
+                  ),
                 ],
               ),
       ),
@@ -255,6 +381,7 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
                     : item,
               )
               .toList();
+          _applyFilters();
         });
         return;
       }
@@ -342,6 +469,7 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
                   : item,
             )
             .toList();
+        _applyFilters();
       });
     } catch (error, stackTrace) {
       // Comprehensive error logging
@@ -410,6 +538,7 @@ class _AdminAccessRequestsScreenState extends State<AdminAccessRequestsScreen> {
                   : item,
             )
             .toList();
+        _applyFilters();
       });
     } catch (error) {
       if (mounted) {
@@ -488,6 +617,95 @@ class _ErrorState extends StatelessWidget {
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({
+    required this.label,
+    required this.count,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int count;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFF0A4D68)
+              : Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFF0A4D68)
+                : Colors.grey[300]!,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.grey[700],
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 14,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (count > 0) ...[
+              const SizedBox(width: 4),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: count > 99 ? 6 : count > 9 ? 5 : 4,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? Colors.white.withOpacity(0.35)
+                      : (label == 'Pending'
+                          ? const Color(0xFFF2C94C).withOpacity(0.25)
+                          : label == 'Approved'
+                              ? const Color(0xFF27AE60).withOpacity(0.25)
+                              : Colors.grey[400]!.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  count.toString(),
+                  style: TextStyle(
+                    color: isSelected
+                        ? Colors.white
+                        : (label == 'Pending'
+                            ? const Color(0xFFF2C94C)
+                            : label == 'Approved'
+                                ? const Color(0xFF27AE60)
+                                : Colors.grey[800]),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                    height: 1.1,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
           ],
         ),
       ),

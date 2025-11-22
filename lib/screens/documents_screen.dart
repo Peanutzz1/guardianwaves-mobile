@@ -171,7 +171,10 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           if (vesselOptions.isNotEmpty) ...[
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
-              value: _selectedVesselId,
+              value: _selectedVesselId != null && 
+                     vesselOptions.any((item) => item.value == _selectedVesselId)
+                ? _selectedVesselId
+                : null,
               decoration: InputDecoration(
                 labelText: 'Filter by vessel',
                 filled: true,
@@ -374,7 +377,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              doc.name,
+                              doc.type == 'SIRB' && doc.crewName != null && doc.crewName!.isNotEmpty
+                                  ? '${doc.name} - ${doc.crewName}'
+                                  : doc.name,
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 16,
@@ -519,14 +524,29 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         if (rawList == null) return;
         for (final item in rawList) {
           if (item is! Map<String, dynamic>) continue;
+          
+          // For SIRB (officersCrew), use position as name and crew member name as crewName
+          String documentName;
+          String? crewName;
+          if (defaultType == 'SIRB') {
+            // For SIRB: name is position, crewName is the person's name
+            documentName = (item['position'] ?? 
+                           item['certificateType'] ?? 
+                           'SIRB').toString();
+            crewName = item['name'] as String?;
+          } else {
+            // For other documents: use standard name extraction
+            documentName = (item['name'] ??
+                           item['certificateType'] ??
+                           item['licenseType'] ??
+                           'Unnamed Document').toString();
+            crewName = item['crewName'] as String?;
+          }
+          
           results.add(
             DocumentItem(
               id: '${vesselId}_${results.length}',
-              name: (item['name'] ??
-                      item['certificateType'] ??
-                      item['licenseType'] ??
-                      'Unnamed Document')
-                  .toString(),
+              name: documentName,
               type: (item['type'] ?? defaultType).toString(),
               category: category,
               vesselId: vesselId,
@@ -536,13 +556,14 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                   item['licenseExpiry'] ??
                   item['seafarerIdExpiry'],
               issuedDate: item['dateIssued'],
-              fileUrl: _extractFileUrl(item),
+              fileUrl: _extractFileUrl(item, defaultType),
               hasExpiry: (item['hasExpiry'] as bool?) ??
                   item.containsKey('expiryDate') ||
                       item.containsKey('dateExpiry') ||
                       item.containsKey('licenseExpiry') ||
                       item.containsKey('seafarerIdExpiry'),
-              crewName: item['crewName'] as String?,
+              crewName: crewName,
+              photoUrls: _extractPhotoUrls(item),
             ),
           );
         }
@@ -552,6 +573,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         data['expiryCertificates'] as List<dynamic>?,
         defaultType: 'Certificate',
         category: 'Ship Certificates',
+      );
+      addDocumentFromList(
+        data['officersCrew'] as List<dynamic>?,
+        defaultType: 'SIRB',
+        category: 'Officers & Crew',
       );
       addDocumentFromList(
         data['competencyCertificates'] as List<dynamic>?,
@@ -587,7 +613,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         return doc.name.toLowerCase().contains(query) ||
             doc.vesselName.toLowerCase().contains(query) ||
             doc.type.toLowerCase().contains(query) ||
-            doc.category.toLowerCase().contains(query);
+            doc.category.toLowerCase().contains(query) ||
+            (doc.crewName != null && doc.crewName!.toLowerCase().contains(query));
       }).toList();
     }
 
@@ -655,8 +682,15 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Future<void> _viewDocument(DocumentItem doc) async {
-    final url = doc.fileUrl;
-    if (url == null || url.isEmpty) {
+    // Get all photo URLs - prefer photoUrls array, fallback to single fileUrl
+    List<String> photoUrls = [];
+    if (doc.photoUrls != null && doc.photoUrls!.isNotEmpty) {
+      photoUrls = doc.photoUrls!;
+    } else if (doc.fileUrl != null && doc.fileUrl!.isNotEmpty) {
+      photoUrls = [doc.fileUrl!];
+    }
+
+    if (photoUrls.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -667,27 +701,208 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       return;
     }
 
-    try {
-      final uri = Uri.parse(url);
-      final launched =
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not open the document.'),
-            backgroundColor: Colors.red,
+    // Show photo viewer dialog
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
           ),
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error opening document: $error'),
-          backgroundColor: Colors.red,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A4D68),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(12),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        photoUrls.length > 1
+                            ? 'View Photos (${photoUrls.length})'
+                            : 'View Photo',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              // Photo content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: photoUrls.length == 1
+                      ? _buildSinglePhotoView(photoUrls[0])
+                      : _buildMultiplePhotosView(photoUrls),
+                ),
+              ),
+            ],
+          ),
         ),
-      );
-    }
+      ),
+    );
+  }
+
+  Widget _buildSinglePhotoView(String url) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: () => _showFullScreenPhoto(url),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              url,
+              fit: BoxFit.contain,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return Container(
+                  height: 300,
+                  alignment: Alignment.center,
+                  child: CircularProgressIndicator(
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                        : null,
+                  ),
+                );
+              },
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  height: 300,
+                  alignment: Alignment.center,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline,
+                          size: 48, color: Colors.red),
+                      const SizedBox(height: 8),
+                      const Text('Failed to load image'),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Open in browser'),
+                        onPressed: () async {
+                          try {
+                            final uri = Uri.parse(url);
+                            await launchUrl(uri,
+                                mode: LaunchMode.externalApplication);
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMultiplePhotosView(List<String> urls) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${urls.length} photo(s) uploaded',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 12),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            childAspectRatio: 1,
+          ),
+          itemCount: urls.length,
+          itemBuilder: (context, index) {
+            return GestureDetector(
+              onTap: () => _showFullScreenPhoto(urls[index], urls, index),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    urls[index],
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Container(
+                        alignment: Alignment.center,
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: Colors.grey[200],
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.error_outline,
+                            size: 32, color: Colors.red),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showFullScreenPhoto(String url, [List<String>? allUrls, int? index]) {
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _FullScreenPhotoViewer(
+          photoUrl: url,
+          allPhotos: allUrls,
+          initialIndex: index ?? 0,
+        ),
+      ),
+    );
   }
 
   Future<void> _updateDocument(DocumentItem doc) async {
@@ -863,6 +1078,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
   IconData _getDocumentIcon(String type) {
     switch (type.toLowerCase()) {
+      case 'sirb':
+        return Icons.person_outlined;
       case 'license':
         return Icons.badge_outlined;
       case 'certificate of competency':
@@ -874,21 +1091,62 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     }
   }
 
-  String? _extractFileUrl(Map<String, dynamic> item) {
-    final keys = [
-      'fileUrl',
-      'certificateFileUrl',
-      'url',
-      'downloadURL',
-      'cloudinaryUrl',
-      'scannedFileUrl',
-    ];
-
-    for (final key in keys) {
-      final value = item[key];
-      if (value is String && value.isNotEmpty) {
-        return value;
+  String? _extractFileUrl(Map<String, dynamic> item, [String? documentType]) {
+    // For SIRB, check seafarerIdFileUrl first
+    if (documentType == 'SIRB') {
+      final keys = [
+        'seafarerIdFileUrl',
+        'certificateFileUrl',
+        'fileUrl',
+        'url',
+        'downloadURL',
+        'cloudinaryUrl',
+        'scannedFileUrl',
+      ];
+      
+      for (final key in keys) {
+        final value = item[key];
+        if (value is String && value.isNotEmpty) {
+          return value;
+        }
       }
+    } else {
+      // For other documents, use standard keys
+      final keys = [
+        'fileUrl',
+        'certificateFileUrl',
+        'url',
+        'downloadURL',
+        'cloudinaryUrl',
+        'scannedFileUrl',
+      ];
+
+      for (final key in keys) {
+        final value = item[key];
+        if (value is String && value.isNotEmpty) {
+          return value;
+        }
+      }
+    }
+    return null;
+  }
+
+  List<String>? _extractPhotoUrls(Map<String, dynamic> item) {
+    // Check for photoUrls array first
+    final photoUrls = item['photoUrls'];
+    if (photoUrls is List) {
+      final urls = photoUrls
+          .where((url) => url is String && url.isNotEmpty)
+          .cast<String>()
+          .toList();
+      if (urls.isNotEmpty) {
+        return urls;
+      }
+    }
+    // Fallback: if no photoUrls array, check for single fileUrl
+    final fileUrl = _extractFileUrl(item);
+    if (fileUrl != null && fileUrl.isNotEmpty) {
+      return [fileUrl];
     }
     return null;
   }
@@ -996,5 +1254,132 @@ class ExpiryStatus {
   final String label;
   final Color color;
   final IconData icon;
+}
+
+class _FullScreenPhotoViewer extends StatefulWidget {
+  final String photoUrl;
+  final List<String>? allPhotos;
+  final int initialIndex;
+
+  const _FullScreenPhotoViewer({
+    required this.photoUrl,
+    this.allPhotos,
+    this.initialIndex = 0,
+  });
+
+  @override
+  State<_FullScreenPhotoViewer> createState() => _FullScreenPhotoViewerState();
+}
+
+class _FullScreenPhotoViewerState extends State<_FullScreenPhotoViewer> {
+  late PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photos = widget.allPhotos ?? [widget.photoUrl];
+    final hasMultiple = photos.length > 1;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: hasMultiple
+            ? Text(
+                'Photo ${_currentIndex + 1} of ${photos.length}',
+                style: const TextStyle(color: Colors.white),
+              )
+            : null,
+      ),
+      body: hasMultiple
+          ? PageView.builder(
+              controller: _pageController,
+              itemCount: photos.length,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              itemBuilder: (context, index) {
+                return _buildPhotoView(photos[index]);
+              },
+            )
+          : _buildPhotoView(photos[0]),
+    );
+  }
+
+  Widget _buildPhotoView(String url) {
+    return Center(
+      child: InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 4.0,
+        child: Image.network(
+          url,
+          fit: BoxFit.contain,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Center(
+              child: CircularProgressIndicator(
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline,
+                      size: 64, color: Colors.red),
+                  const SizedBox(height: 16),
+                  const Text('Failed to load image',
+                      style: TextStyle(color: Colors.white)),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    icon: const Icon(Icons.open_in_new, color: Colors.white),
+                    label: const Text('Open in browser',
+                        style: TextStyle(color: Colors.white)),
+                    onPressed: () async {
+                      try {
+                        final uri = Uri.parse(url);
+                        await launchUrl(uri,
+                            mode: LaunchMode.externalApplication);
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 

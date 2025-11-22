@@ -394,12 +394,13 @@ class _VesselsScreenState extends State<VesselsScreen> {
       final officersCrew = vessel['officersCrew'] as List? ?? [];
       officersAndCrew += officersCrew.length;
 
-      // Check all certificate types with source tracking
+      // Check all certificate types with source tracking (including officersCrew for SIRB)
       final certificates = [
         ...(vessel['certificates'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'certificates'}),
         ...(vessel['expiryCertificates'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'expiry'}),
         ...(vessel['competencyCertificates'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'competency'}),
         ...(vessel['competencyLicenses'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'license'}),
+        ...(vessel['officersCrew'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'officersCrew'}),
       ];
 
       for (var cert in certificates) {
@@ -418,6 +419,13 @@ class _VesselsScreenState extends State<VesselsScreen> {
           expiryDateField = cert['licenseExpiry'] ?? 
                            cert['expiryDate'] ?? 
                            cert['dateExpiry'] ?? 
+                           cert['dateExpiration'] ?? 
+                           cert['expirationDate'];
+        } else if (cert['source'] == 'officersCrew') {
+          // SIRB certificates - check seafarerIdExpiry first
+          expiryDateField = cert['seafarerIdExpiry'] ?? 
+                           cert['dateExpiry'] ?? 
+                           cert['expiryDate'] ?? 
                            cert['dateExpiration'] ?? 
                            cert['expirationDate'];
         } else {

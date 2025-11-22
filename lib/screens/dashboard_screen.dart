@@ -8,6 +8,7 @@ import 'add_vessel_screen_v2.dart';
 import 'request_vessel_access_screen.dart';
 import 'vessel_detail_screen.dart';
 import 'documents_screen.dart';
+import 'departure_log_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -104,12 +105,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final officersCrew = vesselData['officersCrew'] as List? ?? [];
         officersAndCrew += officersCrew.length;
         
-        // Check all certificate types with source tracking (matching vessels_screen.dart)
+        // Check all certificate types with source tracking (matching vessels_screen.dart, including officersCrew for SIRB)
         final certificates = [
           ...(vesselData['certificates'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'certificates'}),
           ...(vesselData['expiryCertificates'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'expiry'}),
           ...(vesselData['competencyCertificates'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'competency'}),
           ...(vesselData['competencyLicenses'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'license'}),
+          ...(vesselData['officersCrew'] as List? ?? []).map((cert) => {...cert as Map, 'source': 'officersCrew'}),
         ];
         
         // Count certificates
@@ -129,6 +131,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             expiryDateField = cert['licenseExpiry'] ?? 
                              cert['expiryDate'] ?? 
                              cert['dateExpiry'] ?? 
+                             cert['dateExpiration'] ?? 
+                             cert['expirationDate'];
+          } else if (cert['source'] == 'officersCrew') {
+            // SIRB certificates - check seafarerIdExpiry first
+            expiryDateField = cert['seafarerIdExpiry'] ?? 
+                             cert['dateExpiry'] ?? 
+                             cert['expiryDate'] ?? 
                              cert['dateExpiration'] ?? 
                              cert['expirationDate'];
           } else {
@@ -555,6 +564,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
               context,
               MaterialPageRoute(
                 builder: (context) => const RequestVesselAccessScreen(),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        _buildActionCard(
+          title: 'Departure Log',
+          subtitle: 'Add and manage vessel arrival & departure logs',
+          icon: Icons.sailing,
+          color: const Color(0xFFFF9800),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const DepartureLogScreen(),
               ),
             );
           },

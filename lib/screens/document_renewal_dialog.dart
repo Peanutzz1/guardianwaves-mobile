@@ -27,8 +27,9 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
   final OCRService _ocrService = OCRService();
   final DataExtractionService _dataExtractionService = DataExtractionService();
   
-  XFile? _selectedImage;
-  File? _imageFile;
+  // Changed to support multiple photos (2-3)
+  List<XFile> _selectedImages = [];
+  List<File> _imageFiles = [];
   bool _isScanning = false;
   bool _isUploading = false;
   bool _isSaving = false;
@@ -171,18 +172,65 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final XFile? image = await _imagePicker.pickImage(
-        source: source,
-        maxWidth: 1920,
-        maxHeight: 1080,
-        imageQuality: 85,
-      );
+      final int remainingSlots = 3 - _selectedImages.length;
+      if (remainingSlots <= 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Maximum 3 photos allowed'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
 
-      if (image != null) {
-      setState(() {
-        _selectedImage = image;
-        _imageFile = File(image.path);
-      });
+      if (source == ImageSource.gallery) {
+        // Allow picking multiple images from gallery
+        final List<XFile> images = await _imagePicker.pickMultiImage(
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (images.isNotEmpty) {
+          final int totalPhotos = _selectedImages.length + images.length;
+          if (totalPhotos > 3) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('You can only add ${3 - _selectedImages.length} more photo(s)'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+            // Take only the allowed number
+            setState(() {
+              _selectedImages.addAll(images.take(3 - _selectedImages.length));
+              _imageFiles.addAll(images.take(3 - _selectedImages.length).map((img) => File(img.path)));
+            });
+          } else {
+            setState(() {
+              _selectedImages.addAll(images);
+              _imageFiles.addAll(images.map((img) => File(img.path)));
+            });
+          }
+        }
+      } else {
+        // Camera - single image
+        final XFile? image = await _imagePicker.pickImage(
+          source: source,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (image != null) {
+          setState(() {
+            _selectedImages.add(image);
+            _imageFiles.add(File(image.path));
+          });
+        }
       }
     } catch (error) {
       if (mounted) {
@@ -196,16 +244,23 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
     }
   }
 
+  void _removePhoto(int index) {
+    setState(() {
+      _selectedImages.removeAt(index);
+      _imageFiles.removeAt(index);
+    });
+  }
+
   Future<void> _scanDocument() async {
-    if (_imageFile == null) return;
+    if (_imageFiles.isEmpty) return;
 
     setState(() {
       _isScanning = true;
     });
 
     try {
-      // Perform OCR
-      final result = await _ocrService.recognizeText(_imageFile!.path);
+      // Perform OCR on the first image
+      final result = await _ocrService.recognizeText(_imageFiles[0].path);
       final extractedText = result['text'] as String;
       
       // Extract certificate data based on document type
@@ -238,16 +293,32 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
           // For SIRB and COC, check for position field first, then certificateType
           if (widget.document.type == 'SIRB' || widget.document.type == 'Certificate of Competency') {
             if (certificateData['position'] != null) {
-              _certificateTypeController.text = certificateData['position'] as String;
+              final position = (certificateData['position'] as String).trim();
+              // Only set if it's in the valid position list
+              if (_positionList.contains(position)) {
+                _certificateTypeController.text = position;
+              }
             } else if (certificateData['certificateType'] != null) {
-              _certificateTypeController.text = certificateData['certificateType'] as String;
+              final certType = (certificateData['certificateType'] as String).trim();
+              // Only set if it's in the valid position list
+              if (_positionList.contains(certType)) {
+                _certificateTypeController.text = certType;
+              }
             }
           } else if (widget.document.type == 'License') {
             // For License, check for licenseType field first, then certificateType
             if (certificateData['licenseType'] != null) {
-              _certificateTypeController.text = certificateData['licenseType'] as String;
+              final licenseType = (certificateData['licenseType'] as String).trim();
+              // Only set if it's in the valid license types list
+              if (_licenseTypes.contains(licenseType)) {
+                _certificateTypeController.text = licenseType;
+              }
             } else if (certificateData['certificateType'] != null) {
-              _certificateTypeController.text = certificateData['certificateType'] as String;
+              final certType = (certificateData['certificateType'] as String).trim();
+              // Only set if it's in the valid license types list
+              if (_licenseTypes.contains(certType)) {
+                _certificateTypeController.text = certType;
+              }
             }
           } else if (certificateData['certificateType'] != null) {
             _certificateTypeController.text = certificateData['certificateType'] as String;
@@ -406,10 +477,10 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
   }
 
   Future<void> _uploadAndSave() async {
-    if (_imageFile == null) {
+    if (_imageFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please upload a certificate file'),
+          content: Text('Please upload at least one certificate file'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -463,16 +534,20 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
     });
 
     try {
-      // Upload file to Cloudinary
-      final fileUrl = await CloudinaryService.uploadCertificate(
-        file: _imageFile!,
-        vesselId: widget.vesselId,
-        certificateId: widget.document.id,
-      );
+      // Upload all files to Cloudinary
+      List<String> fileUrls = [];
+      for (var imageFile in _imageFiles) {
+        final fileUrl = await CloudinaryService.uploadCertificate(
+          file: imageFile,
+          vesselId: widget.vesselId,
+          certificateId: widget.document.id,
+        );
+        fileUrls.add(fileUrl);
+      }
 
-      // Update the document in Firebase
+      // Update the document in Firebase with multiple photo URLs
       debugPrint('🔄 Starting Firebase update...');
-      await _updateDocumentInFirebase(fileUrl);
+      await _updateDocumentInFirebase(fileUrls);
       debugPrint('✅ Firebase update completed successfully');
 
       if (mounted) {
@@ -507,7 +582,9 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
     }
   }
 
-  Future<void> _updateDocumentInFirebase(String fileUrl) async {
+  Future<void> _updateDocumentInFirebase(List<String> fileUrls) async {
+    // For backward compatibility, use first URL as primary
+    final String primaryFileUrl = fileUrls.isNotEmpty ? fileUrls[0] : '';
     try {
       final vesselDoc = await FirebaseFirestore.instance
           .collection('vessels')
@@ -670,12 +747,13 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             'certificateType': _certificateTypeController.text.trim(),
             'name': _certificateTypeController.text.trim(),
             'dateIssued': dateIssuedFormatted,
-            'certificateFileUrl': fileUrl,
-            'fileUrl': fileUrl,
-            'url': fileUrl,
-            'downloadURL': fileUrl,
-            'cloudinaryUrl': fileUrl,
-            'scannedFileUrl': fileUrl,
+            'certificateFileUrl': primaryFileUrl,
+            'fileUrl': primaryFileUrl,
+            'url': primaryFileUrl,
+            'downloadURL': primaryFileUrl,
+            'cloudinaryUrl': primaryFileUrl,
+            'scannedFileUrl': primaryFileUrl,
+            'photoUrls': fileUrls, // Store all photo URLs
             'status': 'VALID',
             'remarks': 'VALID',
           };
@@ -686,12 +764,13 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             'certificateType': _certificateTypeController.text.trim(),
             'name': _certificateTypeController.text.trim(),
             'dateIssued': dateIssuedFormatted,
-            'certificateFileUrl': fileUrl,
-            'fileUrl': fileUrl,
-            'url': fileUrl,
-            'downloadURL': fileUrl,
-            'cloudinaryUrl': fileUrl,
-            'scannedFileUrl': fileUrl,
+            'certificateFileUrl': primaryFileUrl,
+            'fileUrl': primaryFileUrl,
+            'url': primaryFileUrl,
+            'downloadURL': primaryFileUrl,
+            'cloudinaryUrl': primaryFileUrl,
+            'scannedFileUrl': primaryFileUrl,
+            'photoUrls': fileUrls, // Store all photo URLs
             'status': 'VALID',
             'remarks': 'VALID',
           };
@@ -765,12 +844,13 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             'name': _certificateTypeController.text.trim(),
             'dateIssued': dateIssuedFormatted,
             'dateExpiry': dateExpiryFormatted,
-            'certificateFileUrl': fileUrl,
-            'fileUrl': fileUrl,
-            'url': fileUrl,
-            'downloadURL': fileUrl,
-            'cloudinaryUrl': fileUrl,
-            'scannedFileUrl': fileUrl,
+            'certificateFileUrl': primaryFileUrl,
+            'fileUrl': primaryFileUrl,
+            'url': primaryFileUrl,
+            'downloadURL': primaryFileUrl,
+            'cloudinaryUrl': primaryFileUrl,
+            'scannedFileUrl': primaryFileUrl,
+            'photoUrls': fileUrls, // Store all photo URLs
             'status': certificateStatus,
             'remarks': certificateStatus,
             'hasExpiry': true, // Ensure hasExpiry is set
@@ -858,8 +938,9 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             'seafarerIdExpiry': dateExpiryFormatted,
             'certificateExpiry': dateExpiryFormatted,
             'expiryDate': dateExpiryFormatted,
-            'certificateFileUrl': fileUrl,
-            'fileUrl': fileUrl,
+            'certificateFileUrl': primaryFileUrl,
+            'fileUrl': primaryFileUrl,
+            'photoUrls': fileUrls, // Store all photo URLs
             'status': certificateStatus,
             'remarks': certificateStatus,
           };
@@ -926,8 +1007,9 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             'dateIssued': dateIssuedFormatted,
             'licenseExpiry': dateExpiryFormatted,
             'expiryDate': dateExpiryFormatted,
-            'certificateFileUrl': fileUrl,
-            'fileUrl': fileUrl,
+            'certificateFileUrl': primaryFileUrl,
+            'fileUrl': primaryFileUrl,
+            'photoUrls': fileUrls, // Store all photo URLs
             'status': certificateStatus,
             'remarks': certificateStatus,
           };
@@ -976,9 +1058,10 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
             'dateIssued': dateIssuedFormatted,
             'seafarerIdExpiry': dateExpiryFormatted,
             'expiryDate': dateExpiryFormatted,
-            'seafarerIdFileUrl': fileUrl,
-            'certificateFileUrl': fileUrl,
-            'fileUrl': fileUrl,
+            'seafarerIdFileUrl': primaryFileUrl,
+            'certificateFileUrl': primaryFileUrl,
+            'fileUrl': primaryFileUrl,
+            'photoUrls': fileUrls, // Store all photo URLs
             'status': certificateStatus,
             'remarks': certificateStatus,
           };
@@ -1024,8 +1107,9 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
               'seafarerIdExpiry': dateExpiryFormatted,
               'certificateExpiry': dateExpiryFormatted,
               'expiryDate': dateExpiryFormatted,
-              'certificateFileUrl': fileUrl,
-              'fileUrl': fileUrl,
+              'certificateFileUrl': primaryFileUrl,
+              'fileUrl': primaryFileUrl,
+              'photoUrls': fileUrls, // Store all photo URLs
               'status': certificateStatus,
               'remarks': certificateStatus,
             };
@@ -1137,7 +1221,84 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
                             ),
                             const SizedBox(height: 12),
                             
-                            if (_selectedImage == null) ...[
+                            // Photo counter
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Photos (Max 3)',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  '${_selectedImages.length}/3',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            
+                            // Display selected photos in grid
+                            if (_selectedImages.isNotEmpty) ...[
+                              GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                  childAspectRatio: 1,
+                                ),
+                                itemCount: _selectedImages.length,
+                                itemBuilder: (context, index) {
+                                  return Stack(
+                                    children: [
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          border: Border.all(color: Colors.grey[300]!),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: Image.file(
+                                            _imageFiles[index],
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      ),
+                                      Positioned(
+                                        top: 4,
+                                        right: 4,
+                                        child: GestureDetector(
+                                          onTap: () => _removePhoto(index),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: const BoxDecoration(
+                                              color: Colors.red,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.close,
+                                              color: Colors.white,
+                                              size: 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            
+                            // Upload buttons
+                            if (_selectedImages.length < 3) ...[
                               Row(
                                 children: [
                                   Expanded(
@@ -1166,54 +1327,48 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
                                 ],
                               ),
                             ] else ...[
-                              RepaintBoundary(
-                                child: Container(
-                                  height: 200,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(color: Colors.grey[300]!),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Image.file(
-                                      _imageFile!,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  ),
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange[50],
+                                  borderRadius: BorderRadius.circular(4),
                                 ),
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: _isScanning ? null : _scanDocument,
-                                      icon: _isScanning
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(strokeWidth: 2),
-                                            )
-                                          : const Icon(Icons.document_scanner),
-                                      label: Text(_isScanning ? 'Scanning...' : 'Scan & Extract Data'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF0A4D68),
-                                        foregroundColor: Colors.white,
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Maximum 3 photos reached',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.orange[700],
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  OutlinedButton.icon(
-                                    onPressed: () {
-                                      setState(() {
-                                        _selectedImage = null;
-                                        _imageFile = null;
-                                      });
-                                    },
-                                    icon: const Icon(Icons.refresh),
-                                    label: const Text('Change'),
-                                  ),
-                                ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                            
+                            // Scan button (only show if at least one photo is selected)
+                            if (_selectedImages.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              ElevatedButton.icon(
+                                onPressed: _isScanning ? null : _scanDocument,
+                                icon: _isScanning
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.document_scanner),
+                                label: Text(_isScanning ? 'Scanning...' : 'Scan & Extract Data (First Photo)'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0A4D68),
+                                  foregroundColor: Colors.white,
+                                  minimumSize: const Size(double.infinity, 48),
+                                ),
                               ),
                             ],
                           ],
@@ -1244,7 +1399,8 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
                     // Certificate Type / Position / License Type
                     widget.document.type == 'Certificate of Competency' || widget.document.type == 'SIRB'
                         ? DropdownButtonFormField<String>(
-                            value: _certificateTypeController.text.isEmpty
+                            value: _certificateTypeController.text.isEmpty || 
+                                   !_positionList.contains(_certificateTypeController.text)
                                 ? null
                                 : _certificateTypeController.text,
                             decoration: const InputDecoration(
@@ -1271,7 +1427,8 @@ class _DocumentRenewalDialogState extends State<DocumentRenewalDialog> {
                           )
                         : widget.document.type == 'License'
                             ? DropdownButtonFormField<String>(
-                                value: _certificateTypeController.text.isEmpty
+                                value: _certificateTypeController.text.isEmpty || 
+                                       !_licenseTypes.contains(_certificateTypeController.text)
                                     ? null
                                     : _certificateTypeController.text,
                                 decoration: const InputDecoration(

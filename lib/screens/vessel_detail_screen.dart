@@ -645,7 +645,9 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                       Expanded(
                         child: InkWell(
                               onTap: () {
-                            _viewFile(fileUrl.toString());
+                            // Get the certificate data to extract photoUrls
+                            final cert = certMap[certType];
+                            _viewFile(fileUrl.toString(), cert);
                             },
                           child: Text(
                             'View Certificate File',
@@ -838,8 +840,8 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                       Expanded(
                         child: InkWell(
                               onTap: () {
-                            // Open file viewer
-                            _viewFile(cert['certificateFileUrl'] ?? cert['fileUrl']);
+                            // Open file viewer with certificate data to extract photoUrls
+                            _viewFile(cert['certificateFileUrl'] ?? cert['fileUrl'], cert);
                             },
                           child: Text(
                             'View Certificate File',
@@ -882,40 +884,239 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
     );
   }
 
-  Future<void> _viewFile(String? fileUrl) async {
-    if (fileUrl == null || fileUrl.isEmpty) {
+  Future<void> _viewFile(String? fileUrl, [Map<String, dynamic>? itemData]) async {
+    // Get all photo URLs - prefer photoUrls array, fallback to single fileUrl
+    List<String> photoUrls = [];
+    
+    if (itemData != null) {
+      // Check for photoUrls array first
+      final photoUrlsData = itemData['photoUrls'];
+      if (photoUrlsData is List) {
+        final urls = photoUrlsData
+            .where((url) => url is String && url.isNotEmpty)
+            .cast<String>()
+            .toList();
+        if (urls.isNotEmpty) {
+          photoUrls = urls;
+        }
+      }
+    }
+    
+    // Fallback to single fileUrl if no photoUrls array
+    if (photoUrls.isEmpty && fileUrl != null && fileUrl.isNotEmpty) {
+      photoUrls = [fileUrl];
+    }
+
+    if (photoUrls.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No file available')),
       );
       return;
     }
-    
-    try {
-      final Uri url = Uri.parse(fileUrl);
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not open the document. URL: $url'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error opening document: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
+
+    // Show photo viewer dialog
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
           ),
-        );
-      }
-    }
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A4D68),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(12),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        photoUrls.length > 1
+                            ? 'View Photos (${photoUrls.length})'
+                            : 'View Photo',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              // Photo content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: photoUrls.length == 1
+                      ? _buildSinglePhotoView(photoUrls[0])
+                      : _buildMultiplePhotosView(photoUrls),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSinglePhotoView(String url) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: () => _showFullScreenPhoto(url),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              url,
+              fit: BoxFit.contain,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return Container(
+                  height: 300,
+                  alignment: Alignment.center,
+                  child: CircularProgressIndicator(
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                        : null,
+                  ),
+                );
+              },
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  height: 300,
+                  alignment: Alignment.center,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline,
+                          size: 48, color: Colors.red),
+                      const SizedBox(height: 8),
+                      const Text('Failed to load image'),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Open in browser'),
+                        onPressed: () async {
+                          try {
+                            final uri = Uri.parse(url);
+                            await launchUrl(uri,
+                                mode: LaunchMode.externalApplication);
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMultiplePhotosView(List<String> urls) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${urls.length} photo(s) uploaded',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 12),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            childAspectRatio: 1,
+          ),
+          itemCount: urls.length,
+          itemBuilder: (context, index) {
+            return GestureDetector(
+              onTap: () => _showFullScreenPhoto(urls[index], urls, index),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    urls[index],
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Container(
+                        alignment: Alignment.center,
+                        child: CircularProgressIndicator(
+                          value: loadingProgress.expectedTotalBytes != null
+                              ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                              : null,
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: Colors.grey[200],
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.error_outline,
+                            size: 32, color: Colors.red),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showFullScreenPhoto(String url, [List<String>? allUrls, int? index]) {
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _FullScreenPhotoViewer(
+          photoUrl: url,
+          allPhotos: allUrls,
+          initialIndex: index ?? 0,
+        ),
+      ),
+    );
   }
   
   Future<void> _updateCertificate(Map<String, dynamic> cert, String type, {String? certificateType}) async {
@@ -1441,7 +1642,8 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
                             final fileUrl = member['certificateFileUrl'] ?? 
                                            member['fileUrl'] ?? 
                                            member['seafarerIdFileUrl'];
-                            _viewFile(fileUrl);
+                            // Pass member data to extract photoUrls
+                            _viewFile(fileUrl, member);
                             },
                           child: Text(
                             'View Document',
@@ -1661,6 +1863,133 @@ class _VesselDetailScreenState extends State<VesselDetailScreen> {
           fontSize: isHeader ? 12 : 13,
           fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
           color: isHeader ? Colors.black87 : Colors.black87,
+        ),
+      ),
+    );
+  }
+}
+
+class _FullScreenPhotoViewer extends StatefulWidget {
+  final String photoUrl;
+  final List<String>? allPhotos;
+  final int initialIndex;
+
+  const _FullScreenPhotoViewer({
+    required this.photoUrl,
+    this.allPhotos,
+    this.initialIndex = 0,
+  });
+
+  @override
+  State<_FullScreenPhotoViewer> createState() => _FullScreenPhotoViewerState();
+}
+
+class _FullScreenPhotoViewerState extends State<_FullScreenPhotoViewer> {
+  late PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photos = widget.allPhotos ?? [widget.photoUrl];
+    final hasMultiple = photos.length > 1;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: hasMultiple
+            ? Text(
+                'Photo ${_currentIndex + 1} of ${photos.length}',
+                style: const TextStyle(color: Colors.white),
+              )
+            : null,
+      ),
+      body: hasMultiple
+          ? PageView.builder(
+              controller: _pageController,
+              itemCount: photos.length,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              itemBuilder: (context, index) {
+                return _buildPhotoView(photos[index]);
+              },
+            )
+          : _buildPhotoView(photos[0]),
+    );
+  }
+
+  Widget _buildPhotoView(String url) {
+    return Center(
+      child: InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 4.0,
+        child: Image.network(
+          url,
+          fit: BoxFit.contain,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Center(
+              child: CircularProgressIndicator(
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+              ),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline,
+                      size: 64, color: Colors.red),
+                  const SizedBox(height: 16),
+                  const Text('Failed to load image',
+                      style: TextStyle(color: Colors.white)),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    icon: const Icon(Icons.open_in_new, color: Colors.white),
+                    label: const Text('Open in browser',
+                        style: TextStyle(color: Colors.white)),
+                    onPressed: () async {
+                      try {
+                        final uri = Uri.parse(url);
+                        await launchUrl(uri,
+                            mode: LaunchMode.externalApplication);
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );

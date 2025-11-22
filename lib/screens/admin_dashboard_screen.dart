@@ -8,6 +8,7 @@ import 'admin_review_screen.dart';
 import 'admin_users_screen.dart';
 import 'admin_vessels_screen.dart';
 import 'vessel_detail_screen.dart';
+import 'departure_log_screen.dart';
 import '../widgets/notification_icon_button.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -170,6 +171,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         .then((_) => _loadDashboardData());
   }
 
+  void _openDepartureLogs() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const DepartureLogScreen()),
+    );
+  }
+
   void _openVesselDetails(VesselSummary vessel) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -270,6 +277,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                 '${_formatCount(_pendingAccessRequests, 'request')} pending',
                             accentColor: const Color(0xFF7B61FF),
                             onTap: _openAccessRequests,
+                          ),
+                          const SizedBox(height: 12),
+                          _QuickActionCard(
+                            icon: Icons.anchor,
+                            title: 'Departure Logs',
+                            subtitle: 'View all vessel arrival & departure logs',
+                            accentColor: const Color(0xFF05BFDB),
+                            onTap: _openDepartureLogs,
                           ),
                         ],
                       ),

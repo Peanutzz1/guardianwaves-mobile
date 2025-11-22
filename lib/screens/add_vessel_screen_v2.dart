@@ -232,8 +232,8 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
   // Step 4: Certificates - WITH EXPIRY (dynamic list)
   List<Map<String, dynamic>> _expiryCertificates = [];
 
-  // Step 4: File upload states
-  Map<String, String> _noExpiryFiles = {}; // certificate type -> file path
+  // Step 4: File upload states - Changed to support multiple photos (2-3)
+  Map<String, List<String>> _noExpiryFiles = {}; // certificate type -> list of file paths
   static const Map<String, String> _noExpiryCertificateLabels = {
     'philippineRegistry': 'Certificate of Philippine Registry',
     'ownership': 'Certificate of Ownership',
@@ -251,23 +251,23 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     'ownership': 'ownershipFileUrl',
     'tonnage': 'tonnageFileUrl',
   };
-  Map<String, String> _expiryFiles = {}; // certificate id -> file path
+  Map<String, List<String>> _expiryFiles = {}; // certificate id -> list of file paths
 
   // Step 5: Officers & Crew - Legacy (kept for backward compatibility)
   List<Map<String, dynamic>> _crewMembers = [];
-  Map<String, String> _crewFiles = {}; // crew id -> file path
+  Map<String, List<String>> _crewFiles = {}; // crew id -> list of file paths
 
   // Step 5: Officers & Crew - SIRB (Seafarer Identification and Record Book)
   List<Map<String, dynamic>> _sirbMembers = [];
-  Map<String, String> _sirbFiles = {}; // sirb id -> file path
+  Map<String, List<String>> _sirbFiles = {}; // sirb id -> list of file paths
 
   // Step 5: Officers & Crew - Document Certificate of Competency
   List<Map<String, dynamic>> _competencyCertificates = [];
-  Map<String, String> _competencyFiles = {}; // competency id -> file path
+  Map<String, List<String>> _competencyFiles = {}; // competency id -> list of file paths
 
   // Step 5: Officers & Crew - License
   List<Map<String, dynamic>> _competencyLicenses = [];
-  Map<String, String> _licenseFiles = {}; // license id -> file path
+  Map<String, List<String>> _licenseFiles = {}; // license id -> list of file paths
 
   // Certificate types for dropdown
   final List<String> _certificateTypes = [
@@ -400,7 +400,8 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     _builderController.text = data['builder']?.toString() ?? '';
     _lengthController.text = data['length']?.toString() ?? '';
     _homeportController.text = data['homeport']?.toString() ?? '';
-    _numberOfEnginesController.text = data['numberOfEngine']?.toString() ?? '';
+    _numberOfEnginesController.text = data['numberOfEngines']?.toString() ?? 
+        data['numberOfEngine']?.toString() ?? '';
     _kilowattController.text = data['kilowatt']?.toString() ?? '';
     final hullMaterial = data['hullMaterial']?.toString() ?? '';
 
@@ -726,8 +727,8 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
   }
 
   bool _hasNoExpirySupportingFile(String certId) {
-    final localPath = _noExpiryFiles[certId];
-    if (localPath != null && localPath.trim().isNotEmpty) {
+    final localPaths = _noExpiryFiles[certId];
+    if (localPaths != null && localPaths.isNotEmpty) {
       return true;
     }
 
@@ -760,11 +761,11 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     return false;
   }
 
-  bool _hasSupportingFile(Map<String, dynamic> item, Map<String, String> localFiles) {
+  bool _hasSupportingFile(Map<String, dynamic> item, Map<String, List<String>> localFiles) {
     final id = item['id']?.toString();
     if (id != null) {
-      final localPath = localFiles[id];
-      if (localPath != null && localPath.trim().isNotEmpty) {
+      final localPaths = localFiles[id];
+      if (localPaths != null && localPaths.isNotEmpty) {
         return true;
       }
     }
@@ -977,7 +978,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     }
   }
 
-  // File upload methods for Step 4
+  // File upload methods for Step 4 - Updated to support 2-3 photos
   void _uploadNoExpiryFile(String certificateType) async {
     try {
       final source = await showDialog<ImageSource>(
@@ -994,7 +995,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               ),
               ListTile(
                 leading: Icon(Icons.photo_library),
-                title: Text('Gallery'),
+                title: Text('Gallery (Multiple)'),
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
             ],
@@ -1004,27 +1005,93 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
       if (source == null) return;
 
-      final XFile? image = await _imagePicker.pickImage(source: source);
-      if (image == null) return;
+      final currentFiles = _noExpiryFiles[certificateType] ?? [];
+      final int remainingSlots = 3 - currentFiles.length;
+      
+      if (remainingSlots <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Maximum 3 photos allowed'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
 
-      setState(() {
-        _noExpiryFiles[certificateType] = image.path;
-      });
+      if (source == ImageSource.gallery) {
+        // Allow picking multiple images
+        final List<XFile> images = await _imagePicker.pickMultiImage(
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (images.isNotEmpty) {
+          final int totalPhotos = currentFiles.length + images.length;
+          if (totalPhotos > 3) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('You can only add ${3 - currentFiles.length} more photo(s)'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            setState(() {
+              _noExpiryFiles[certificateType] = [
+                ...currentFiles,
+                ...images.take(3 - currentFiles.length).map((img) => img.path),
+              ];
+            });
+          } else {
+            setState(() {
+              _noExpiryFiles[certificateType] = [
+                ...currentFiles,
+                ...images.map((img) => img.path),
+              ];
+            });
+          }
+        }
+      } else {
+        // Camera - single image
+        final XFile? image = await _imagePicker.pickImage(
+          source: source,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (image != null) {
+          setState(() {
+            _noExpiryFiles[certificateType] = [...currentFiles, image.path];
+          });
+        }
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('File uploaded successfully'),
+          content: Text('Photo(s) uploaded successfully'),
           backgroundColor: Colors.green,
         ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to upload file'),
+          content: Text('Failed to upload file: $e'),
           backgroundColor: Colors.red,
         ),
       );
     }
+  }
+
+  void _removeNoExpiryPhoto(String certificateType, int index) {
+    setState(() {
+      final files = _noExpiryFiles[certificateType] ?? [];
+      files.removeAt(index);
+      if (files.isEmpty) {
+        _noExpiryFiles.remove(certificateType);
+      } else {
+        _noExpiryFiles[certificateType] = files;
+      }
+    });
   }
 
   void _uploadExpiryFile(int certificateId) async {
@@ -1043,7 +1110,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               ),
               ListTile(
                 leading: Icon(Icons.photo_library),
-                title: Text('Gallery'),
+                title: Text('Gallery (Multiple)'),
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
             ],
@@ -1053,27 +1120,93 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
       if (source == null) return;
 
-      final XFile? image = await _imagePicker.pickImage(source: source);
-      if (image == null) return;
+      final certIdStr = certificateId.toString();
+      final currentFiles = _expiryFiles[certIdStr] ?? [];
+      final int remainingSlots = 3 - currentFiles.length;
+      
+      if (remainingSlots <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Maximum 3 photos allowed'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
 
-      setState(() {
-        _expiryFiles[certificateId.toString()] = image.path;
-      });
+      if (source == ImageSource.gallery) {
+        final List<XFile> images = await _imagePicker.pickMultiImage(
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (images.isNotEmpty) {
+          final int totalPhotos = currentFiles.length + images.length;
+          if (totalPhotos > 3) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('You can only add ${3 - currentFiles.length} more photo(s)'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            setState(() {
+              _expiryFiles[certIdStr] = [
+                ...currentFiles,
+                ...images.take(3 - currentFiles.length).map((img) => img.path),
+              ];
+            });
+          } else {
+            setState(() {
+              _expiryFiles[certIdStr] = [
+                ...currentFiles,
+                ...images.map((img) => img.path),
+              ];
+            });
+          }
+        }
+      } else {
+        final XFile? image = await _imagePicker.pickImage(
+          source: source,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (image != null) {
+          setState(() {
+            _expiryFiles[certIdStr] = [...currentFiles, image.path];
+          });
+        }
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('File uploaded successfully'),
+          content: Text('Photo(s) uploaded successfully'),
           backgroundColor: Colors.green,
         ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to upload file'),
+          content: Text('Failed to upload file: $e'),
           backgroundColor: Colors.red,
         ),
       );
     }
+  }
+
+  void _removeExpiryPhoto(int certificateId, int index) {
+    setState(() {
+      final certIdStr = certificateId.toString();
+      final files = _expiryFiles[certIdStr] ?? [];
+      files.removeAt(index);
+      if (files.isEmpty) {
+        _expiryFiles.remove(certIdStr);
+      } else {
+        _expiryFiles[certIdStr] = files;
+      }
+    });
   }
 
   void _scanExpiryCertificate(int certificateId) async {
@@ -1171,7 +1304,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               _expiryCertificates[index]['dateExpiry'] =
                   extractedData['dateExpiry'];
             }
-            _expiryFiles[certificateId.toString()] = image.path;
+            final certIdStr = certificateId.toString();
+            final currentFiles = _expiryFiles[certIdStr] ?? [];
+            _expiryFiles[certIdStr] = [...currentFiles, image.path];
           }
         });
 
@@ -1234,46 +1369,105 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
   }
 
   void _viewFileForMember(String department, dynamic id) {
-    String? fileName;
+    List<String>? filePaths;
     if (department == 'deck') {
-      fileName = _deckFiles[id.toString()];
+      final path = _deckFiles[id.toString()];
+      filePaths = path != null ? [path] : null;
     } else if (department == 'engine') {
-      fileName = _engineFiles[id.toString()];
+      final path = _engineFiles[id.toString()];
+      filePaths = path != null ? [path] : null;
     } else if (department == 'noexpiry') {
-      fileName = _noExpiryFiles[id.toString()];
+      filePaths = _noExpiryFiles[id.toString()];
     } else if (department == 'expiry') {
-      fileName = _expiryFiles[id.toString()];
+      filePaths = _expiryFiles[id.toString()];
     } else if (department == 'crew') {
-      fileName = _crewFiles[id.toString()];
+      filePaths = _crewFiles[id.toString()];
     } else if (department == 'sirb') {
-      fileName = _sirbFiles[id.toString()];
+      filePaths = _sirbFiles[id.toString()];
     } else if (department == 'competency') {
-      fileName = _competencyFiles[id.toString()];
+      filePaths = _competencyFiles[id.toString()];
     } else if (department == 'license') {
-      fileName = _licenseFiles[id.toString()];
+      filePaths = _licenseFiles[id.toString()];
     }
 
-    if (fileName != null && fileName.isNotEmpty) {
-      final filePath = fileName;
+    if (filePaths != null && filePaths.isNotEmpty) {
+      final paths = filePaths; // Non-null reference for null safety
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('View File'),
+          title: Text(paths.length > 1 ? 'View Photos (${paths.length})' : 'View Photo'),
           content: SingleChildScrollView(
             physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('File: ${filePath.split('/').last}'),
-                SizedBox(height: 16),
-                Image.file(File(filePath), height: 300, fit: BoxFit.contain),
+                if (paths.length > 1) ...[
+                  Text(
+                    '${paths.length} photo(s) uploaded',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (paths.length == 1) ...[
+                  Text('File: ${paths[0].split('/').last}'),
+                  const SizedBox(height: 16),
+                  Image.file(File(paths[0]), height: 300, fit: BoxFit.contain),
+                ] else ...[
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                      childAspectRatio: 1,
+                    ),
+                    itemCount: paths.length,
+                    itemBuilder: (context, index) {
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.pop(context);
+                          showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: Text('Photo ${index + 1}'),
+                              content: Image.file(
+                                File(paths[index]),
+                                fit: BoxFit.contain,
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Close'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey[300]!),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.file(
+                              File(paths[index]),
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: Text('Close'),
+              child: const Text('Close'),
             ),
           ],
         ),
@@ -1345,7 +1539,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               ),
               ListTile(
                 leading: Icon(Icons.photo_library),
-                title: Text('Gallery'),
+                title: Text('Gallery (Multiple)'),
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
             ],
@@ -1355,33 +1549,138 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
       if (source == null) return;
 
-      final XFile? image = await _imagePicker.pickImage(source: source);
-      if (image == null) return;
+      final idStr = id.toString();
+      List<String> currentFiles = [];
+      if (tableType == 'sirb') {
+        currentFiles = _sirbFiles[idStr] ?? [];
+      } else if (tableType == 'competency') {
+        currentFiles = _competencyFiles[idStr] ?? [];
+      } else if (tableType == 'license') {
+        currentFiles = _licenseFiles[idStr] ?? [];
+      }
 
-      setState(() {
-        if (tableType == 'sirb') {
-          _sirbFiles[id.toString()] = image.path;
-        } else if (tableType == 'competency') {
-          _competencyFiles[id.toString()] = image.path;
-        } else if (tableType == 'license') {
-          _licenseFiles[id.toString()] = image.path;
+      final int remainingSlots = 3 - currentFiles.length;
+      if (remainingSlots <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Maximum 3 photos allowed'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      if (source == ImageSource.gallery) {
+        final List<XFile> images = await _imagePicker.pickMultiImage(
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (images.isNotEmpty) {
+          final int totalPhotos = currentFiles.length + images.length;
+          if (totalPhotos > 3) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('You can only add ${3 - currentFiles.length} more photo(s)'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            setState(() {
+              final newFiles = [
+                ...currentFiles,
+                ...images.take(3 - currentFiles.length).map((img) => img.path),
+              ];
+              if (tableType == 'sirb') {
+                _sirbFiles[idStr] = newFiles;
+              } else if (tableType == 'competency') {
+                _competencyFiles[idStr] = newFiles;
+              } else if (tableType == 'license') {
+                _licenseFiles[idStr] = newFiles;
+              }
+            });
+          } else {
+            setState(() {
+              final newFiles = [
+                ...currentFiles,
+                ...images.map((img) => img.path),
+              ];
+              if (tableType == 'sirb') {
+                _sirbFiles[idStr] = newFiles;
+              } else if (tableType == 'competency') {
+                _competencyFiles[idStr] = newFiles;
+              } else if (tableType == 'license') {
+                _licenseFiles[idStr] = newFiles;
+              }
+            });
+          }
         }
-      });
+      } else {
+        final XFile? image = await _imagePicker.pickImage(
+          source: source,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          imageQuality: 85,
+        );
+
+        if (image != null) {
+          setState(() {
+            if (tableType == 'sirb') {
+              _sirbFiles[idStr] = [...currentFiles, image.path];
+            } else if (tableType == 'competency') {
+              _competencyFiles[idStr] = [...currentFiles, image.path];
+            } else if (tableType == 'license') {
+              _licenseFiles[idStr] = [...currentFiles, image.path];
+            }
+          });
+        }
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('File uploaded successfully'),
+          content: Text('Photo(s) uploaded successfully'),
           backgroundColor: Colors.green,
         ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to upload file'),
+          content: Text('Failed to upload file: $e'),
           backgroundColor: Colors.red,
         ),
       );
     }
+  }
+
+  void _removePhoto(String tableType, int id, int index) {
+    setState(() {
+      final idStr = id.toString();
+      if (tableType == 'sirb') {
+        final files = _sirbFiles[idStr] ?? [];
+        files.removeAt(index);
+        if (files.isEmpty) {
+          _sirbFiles.remove(idStr);
+        } else {
+          _sirbFiles[idStr] = files;
+        }
+      } else if (tableType == 'competency') {
+        final files = _competencyFiles[idStr] ?? [];
+        files.removeAt(index);
+        if (files.isEmpty) {
+          _competencyFiles.remove(idStr);
+        } else {
+          _competencyFiles[idStr] = files;
+        }
+      } else if (tableType == 'license') {
+        final files = _licenseFiles[idStr] ?? [];
+        files.removeAt(index);
+        if (files.isEmpty) {
+          _licenseFiles.remove(idStr);
+        } else {
+          _licenseFiles[idStr] = files;
+        }
+      }
+    });
   }
 
   void _scanCertificate(String tableType, int id) async {
@@ -1480,7 +1779,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 _updateSirbMember(id, 'dateExpiry', dateStr);
               }
             }
-            _sirbFiles[id.toString()] = image.path;
+            final sirbIdStr = id.toString();
+            final currentSirbFiles = _sirbFiles[sirbIdStr] ?? [];
+            _sirbFiles[sirbIdStr] = [...currentSirbFiles, image.path];
           } else if (tableType == 'competency') {
             if (extractedData['name'] != null &&
                 extractedData['name'].toString().isNotEmpty) {
@@ -1508,7 +1809,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 _updateCompetencyCertificate(id, 'dateExpiry', dateStr);
               }
             }
-            _competencyFiles[id.toString()] = image.path;
+            final compIdStr = id.toString();
+            final currentCompFiles = _competencyFiles[compIdStr] ?? [];
+            _competencyFiles[compIdStr] = [...currentCompFiles, image.path];
           } else if (tableType == 'license') {
             if (extractedData['name'] != null &&
                 extractedData['name'].toString().isNotEmpty) {
@@ -1543,7 +1846,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 _updateCompetencyLicense(id, 'dateExpiry', dateStr);
               }
             }
-            _licenseFiles[id.toString()] = image.path;
+            final licIdStr = id.toString();
+            final currentLicFiles = _licenseFiles[licIdStr] ?? [];
+            _licenseFiles[licIdStr] = [...currentLicFiles, image.path];
           }
         });
 
@@ -2202,68 +2507,204 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
       // Upload files to Cloudinary and update certificates
       try {
-        // Process NO EXPIRY certificates (Certificate of Philippine Registry, Certificate of Ownership, Tonnage Measurement)
-        List<Map<String, dynamic>> processedNoExpiryDocs = [];
+        // Collect all files that need to be uploaded for parallel processing
+        List<Future<Map<String, dynamic>>> uploadTasks = [];
+        Map<String, String> uploadResults = {}; // key -> fileUrl
 
-        // Certificate of Philippine Registry
-        final philippineRegistryDate = _philippineRegistryDateController.text
-            .trim();
+        // Helper function to get existing file URL for no-expiry docs
+        String? _getExistingNoExpiryUrl(String certificateType) {
+          if (!_isEditMode || widget.vesselData == null) return null;
+          final existingNoExpiryDocs =
+              widget.vesselData!['noExpiryDocs'] as List? ?? [];
+          final existingDocs = existingNoExpiryDocs
+              .where((doc) => doc['certificateType'] == certificateType)
+              .toList();
+          if (existingDocs.isNotEmpty) {
+            final existingDoc = existingDocs.first;
+            return existingDoc['url'] ?? existingDoc['certificateFileUrl'];
+          }
+          return null;
+        }
+
+        // Collect no-expiry certificate uploads - Updated for multiple photos
+        final philippineRegistryDate = _philippineRegistryDateController.text.trim();
         if (philippineRegistryDate.isNotEmpty) {
-          final filePath = _noExpiryFiles['philippineRegistry'];
-          String? fileUrl;
-
-          // Upload file if exists
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              fileUrl = await CloudinaryService.uploadCertificate(
-                file: File(filePath),
-                vesselId: vesselId,
-                certificateId: 'philippineRegistry',
+          final filePaths = _noExpiryFiles['philippineRegistry'] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadCertificate(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  certificateId: 'philippineRegistry',
+                ).then((url) => {'key': 'philippineRegistry', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload Philippine Registry file: $e');
+                  return {'key': 'philippineRegistry', 'url': null, 'isArray': true};
+                }),
               );
-            } catch (e) {
-              print('Failed to upload Philippine Registry file: $e');
-              // Check for existing file URL when editing
-              if (_isEditMode && widget.vesselData != null) {
-                final existingNoExpiryDocs =
-                    widget.vesselData!['noExpiryDocs'] as List? ?? [];
-                final existingDocs = existingNoExpiryDocs
-                    .where(
-                      (doc) =>
-                          doc['certificateType'] ==
-                          'CERTIFICATE OF PHILIPPINE REGISTRY',
-                    )
-                    .toList();
-                if (existingDocs.isNotEmpty) {
-                  final existingDoc = existingDocs.first;
-                  if (existingDoc['url'] != null) {
-                    fileUrl = existingDoc['url'];
-                  } else if (existingDoc['certificateFileUrl'] != null) {
-                    fileUrl = existingDoc['certificateFileUrl'];
-                  }
-                }
-              }
             }
-          } else if (_isEditMode && widget.vesselData != null) {
-            // Keep existing file URL when not uploading new file
-            final existingNoExpiryDocs =
-                widget.vesselData!['noExpiryDocs'] as List? ?? [];
-            final existingDocs = existingNoExpiryDocs
-                .where(
-                  (doc) =>
-                      doc['certificateType'] ==
-                      'CERTIFICATE OF PHILIPPINE REGISTRY',
-                )
-                .toList();
-            if (existingDocs.isNotEmpty) {
-              final existingDoc = existingDocs.first;
-              if (existingDoc['url'] != null) {
-                fileUrl = existingDoc['url'];
-              } else if (existingDoc['certificateFileUrl'] != null) {
-                fileUrl = existingDoc['certificateFileUrl'];
+          }
+        }
+
+        final ownershipDate = _ownershipDateController.text.trim();
+        if (ownershipDate.isNotEmpty) {
+          final filePaths = _noExpiryFiles['ownership'] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadCertificate(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  certificateId: 'ownership',
+                ).then((url) => {'key': 'ownership', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload Ownership file: $e');
+                  return {'key': 'ownership', 'url': null, 'isArray': true};
+                }),
+              );
+            }
+          }
+        }
+
+        final tonnageDate = _tonnageDateController.text.trim();
+        if (tonnageDate.isNotEmpty) {
+          final filePaths = _noExpiryFiles['tonnage'] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadCertificate(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  certificateId: 'tonnage',
+                ).then((url) => {'key': 'tonnage', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload Tonnage Measurement file: $e');
+                  return {'key': 'tonnage', 'url': null, 'isArray': true};
+                }),
+              );
+            }
+          }
+        }
+
+        // Collect expiry certificate uploads - Updated for multiple photos
+        for (var cert in _expiryCertificates) {
+          final certId = cert['id'].toString();
+          final filePaths = _expiryFiles[certId] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadCertificate(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  certificateId: certId,
+                ).then((url) => {'key': 'expiry_$certId', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload certificate file: $e');
+                  return {'key': 'expiry_$certId', 'url': null, 'isArray': true};
+                }),
+              );
+            }
+          }
+        }
+
+        // Collect competency certificate uploads - Updated for multiple photos
+        for (var cert in _competencyCertificates) {
+          final certId = cert['id'].toString();
+          final filePaths = _competencyFiles[certId] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadCertificate(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  certificateId: certId,
+                ).then((url) => {'key': 'competency_$certId', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload competency certificate file: $e');
+                  return {'key': 'competency_$certId', 'url': null, 'isArray': true};
+                }),
+              );
+            }
+          }
+        }
+
+        // Collect license uploads - Updated for multiple photos
+        for (var license in _competencyLicenses) {
+          final licenseId = license['id'].toString();
+          final filePaths = _licenseFiles[licenseId] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadCertificate(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  certificateId: licenseId,
+                ).then((url) => {'key': 'license_$licenseId', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload license file: $e');
+                  return {'key': 'license_$licenseId', 'url': null, 'isArray': true};
+                }),
+              );
+            }
+          }
+        }
+
+        // Collect SIRB member uploads - Updated for multiple photos
+        for (var member in _sirbMembers) {
+          final memberId = member['id'].toString();
+          final filePaths = _sirbFiles[memberId] ?? [];
+          for (var filePath in filePaths) {
+            if (File(filePath).existsSync()) {
+              uploadTasks.add(
+                CloudinaryService.uploadScannedFile(
+                  file: File(filePath),
+                  vesselId: vesselId,
+                  documentType: 'sirb',
+                ).then((url) => {'key': 'sirb_$memberId', 'url': url, 'isArray': true})
+                    .catchError((e) {
+                  print('Failed to upload SIRB file: $e');
+                  return {'key': 'sirb_$memberId', 'url': null, 'isArray': true};
+                }),
+              );
+            }
+          }
+        }
+
+        // Upload all files in parallel (eagerError: false ensures one failure doesn't stop others)
+        // Updated to group multiple photos by key
+        Map<String, List<String>> uploadResultsArrays = {}; // For arrays
+        if (uploadTasks.isNotEmpty) {
+          final results = await Future.wait(uploadTasks, eagerError: false);
+          for (var result in results) {
+            if (result != null && result['url'] != null) {
+              final key = result['key'] as String;
+              final isArray = result['isArray'] == true;
+              if (isArray) {
+                if (!uploadResultsArrays.containsKey(key)) {
+                  uploadResultsArrays[key] = [];
+                }
+                uploadResultsArrays[key]!.add(result['url'] as String);
+              } else {
+                // Legacy single file support
+                uploadResults[result['key']] = result['url'];
               }
             }
           }
+        }
 
+        // Process NO EXPIRY certificates
+        List<Map<String, dynamic>> processedNoExpiryDocs = [];
+
+        if (philippineRegistryDate.isNotEmpty) {
+          List<String> photoUrls = uploadResultsArrays['philippineRegistry'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl == null && _isEditMode) {
+            primaryFileUrl = _getExistingNoExpiryUrl('CERTIFICATE OF PHILIPPINE REGISTRY');
+            if (primaryFileUrl != null) {
+              photoUrls = [primaryFileUrl];
+            }
+          }
           processedNoExpiryDocs.add({
             'id': DateTime.now().millisecondsSinceEpoch,
             'certificateType': 'CERTIFICATE OF PHILIPPINE REGISTRY',
@@ -2271,73 +2712,28 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
             'dateExpiry': null,
             'status': 'VALID',
             'remarks': 'VALID',
-            if (fileUrl != null) ...{
-              'url': fileUrl,
-              'downloadURL': fileUrl,
-              'fileUrl': fileUrl,
-              'certificateFileUrl': fileUrl,
-              'cloudinaryUrl': fileUrl,
-              'documentUrl': fileUrl,
+            if (primaryFileUrl != null) ...{
+              'url': primaryFileUrl,
+              'downloadURL': primaryFileUrl,
+              'fileUrl': primaryFileUrl,
+              'certificateFileUrl': primaryFileUrl,
+              'cloudinaryUrl': primaryFileUrl,
+              'documentUrl': primaryFileUrl,
+              'photoUrls': photoUrls, // Store all photo URLs
             },
             'uploadDate': DateTime.now().toIso8601String(),
           });
         }
 
-        // Certificate of Ownership
-        final ownershipDate = _ownershipDateController.text.trim();
         if (ownershipDate.isNotEmpty) {
-          final filePath = _noExpiryFiles['ownership'];
-          String? fileUrl;
-
-          // Upload file if exists
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              fileUrl = await CloudinaryService.uploadCertificate(
-                file: File(filePath),
-                vesselId: vesselId,
-                certificateId: 'ownership',
-              );
-            } catch (e) {
-              print('Failed to upload Ownership file: $e');
-              // Check for existing file URL when editing
-              if (_isEditMode && widget.vesselData != null) {
-                final existingNoExpiryDocs =
-                    widget.vesselData!['noExpiryDocs'] as List? ?? [];
-                final existingDocs = existingNoExpiryDocs
-                    .where(
-                      (doc) =>
-                          doc['certificateType'] == 'CERTIFICATE OF OWNERSHIP',
-                    )
-                    .toList();
-                if (existingDocs.isNotEmpty) {
-                  final existingDoc = existingDocs.first;
-                  if (existingDoc['url'] != null) {
-                    fileUrl = existingDoc['url'];
-                  } else if (existingDoc['certificateFileUrl'] != null) {
-                    fileUrl = existingDoc['certificateFileUrl'];
-                  }
-                }
-              }
-            }
-          } else if (_isEditMode && widget.vesselData != null) {
-            // Keep existing file URL when not uploading new file
-            final existingNoExpiryDocs =
-                widget.vesselData!['noExpiryDocs'] as List? ?? [];
-            final existingDocs = existingNoExpiryDocs
-                .where(
-                  (doc) => doc['certificateType'] == 'CERTIFICATE OF OWNERSHIP',
-                )
-                .toList();
-            if (existingDocs.isNotEmpty) {
-              final existingDoc = existingDocs.first;
-              if (existingDoc['url'] != null) {
-                fileUrl = existingDoc['url'];
-              } else if (existingDoc['certificateFileUrl'] != null) {
-                fileUrl = existingDoc['certificateFileUrl'];
-              }
+          List<String> photoUrls = uploadResultsArrays['ownership'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl == null && _isEditMode) {
+            primaryFileUrl = _getExistingNoExpiryUrl('CERTIFICATE OF OWNERSHIP');
+            if (primaryFileUrl != null) {
+              photoUrls = [primaryFileUrl];
             }
           }
-
           processedNoExpiryDocs.add({
             'id': DateTime.now().millisecondsSinceEpoch + 1,
             'certificateType': 'CERTIFICATE OF OWNERSHIP',
@@ -2345,70 +2741,28 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
             'dateExpiry': null,
             'status': 'VALID',
             'remarks': 'VALID',
-            if (fileUrl != null) ...{
-              'url': fileUrl,
-              'downloadURL': fileUrl,
-              'fileUrl': fileUrl,
-              'certificateFileUrl': fileUrl,
-              'cloudinaryUrl': fileUrl,
-              'documentUrl': fileUrl,
+            if (primaryFileUrl != null) ...{
+              'url': primaryFileUrl,
+              'downloadURL': primaryFileUrl,
+              'fileUrl': primaryFileUrl,
+              'certificateFileUrl': primaryFileUrl,
+              'cloudinaryUrl': primaryFileUrl,
+              'documentUrl': primaryFileUrl,
+              'photoUrls': photoUrls, // Store all photo URLs
             },
             'uploadDate': DateTime.now().toIso8601String(),
           });
         }
 
-        // Tonnage Measurement
-        final tonnageDate = _tonnageDateController.text.trim();
         if (tonnageDate.isNotEmpty) {
-          final filePath = _noExpiryFiles['tonnage'];
-          String? fileUrl;
-
-          // Upload file if exists
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              fileUrl = await CloudinaryService.uploadCertificate(
-                file: File(filePath),
-                vesselId: vesselId,
-                certificateId: 'tonnage',
-              );
-            } catch (e) {
-              print('Failed to upload Tonnage Measurement file: $e');
-              // Check for existing file URL when editing
-              if (_isEditMode && widget.vesselData != null) {
-                final existingNoExpiryDocs =
-                    widget.vesselData!['noExpiryDocs'] as List? ?? [];
-                final existingDocs = existingNoExpiryDocs
-                    .where(
-                      (doc) => doc['certificateType'] == 'TONNAGE MEASUREMENT',
-                    )
-                    .toList();
-                if (existingDocs.isNotEmpty) {
-                  final existingDoc = existingDocs.first;
-                  if (existingDoc['url'] != null) {
-                    fileUrl = existingDoc['url'];
-                  } else if (existingDoc['certificateFileUrl'] != null) {
-                    fileUrl = existingDoc['certificateFileUrl'];
-                  }
-                }
-              }
-            }
-          } else if (_isEditMode && widget.vesselData != null) {
-            // Keep existing file URL when not uploading new file
-            final existingNoExpiryDocs =
-                widget.vesselData!['noExpiryDocs'] as List? ?? [];
-            final existingDocs = existingNoExpiryDocs
-                .where((doc) => doc['certificateType'] == 'TONNAGE MEASUREMENT')
-                .toList();
-            if (existingDocs.isNotEmpty) {
-              final existingDoc = existingDocs.first;
-              if (existingDoc['url'] != null) {
-                fileUrl = existingDoc['url'];
-              } else if (existingDoc['certificateFileUrl'] != null) {
-                fileUrl = existingDoc['certificateFileUrl'];
-              }
+          List<String> photoUrls = uploadResultsArrays['tonnage'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl == null && _isEditMode) {
+            primaryFileUrl = _getExistingNoExpiryUrl('TONNAGE MEASUREMENT');
+            if (primaryFileUrl != null) {
+              photoUrls = [primaryFileUrl];
             }
           }
-
           processedNoExpiryDocs.add({
             'id': DateTime.now().millisecondsSinceEpoch + 2,
             'certificateType': 'TONNAGE MEASUREMENT',
@@ -2416,147 +2770,107 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
             'dateExpiry': null,
             'status': 'VALID',
             'remarks': 'VALID',
-            if (fileUrl != null) ...{
-              'url': fileUrl,
-              'downloadURL': fileUrl,
-              'fileUrl': fileUrl,
-              'certificateFileUrl': fileUrl,
-              'cloudinaryUrl': fileUrl,
-              'documentUrl': fileUrl,
+            if (primaryFileUrl != null) ...{
+              'url': primaryFileUrl,
+              'downloadURL': primaryFileUrl,
+              'fileUrl': primaryFileUrl,
+              'certificateFileUrl': primaryFileUrl,
+              'cloudinaryUrl': primaryFileUrl,
+              'documentUrl': primaryFileUrl,
+              'photoUrls': photoUrls, // Store all photo URLs
             },
             'uploadDate': DateTime.now().toIso8601String(),
           });
         }
 
-        // Process expiry certificates with files
+        // Process expiry certificates with files - Updated for multiple photos
         List<Map<String, dynamic>> processedExpiryCerts = [];
         for (var cert in _expiryCertificates) {
           final certId = cert['id'].toString();
-          final filePath = _expiryFiles[certId];
-
           Map<String, dynamic> processedCert = Map<String, dynamic>.from(cert);
 
-          // Keep existing file URL if not uploading new file
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              final fileUrl = await CloudinaryService.uploadCertificate(
-                file: File(filePath),
-                vesselId: vesselId,
-                certificateId: certId,
-              );
-              processedCert['certificateFileUrl'] = fileUrl;
-              processedCert['fileUrl'] = fileUrl;
-            } catch (e) {
-              print('Failed to upload certificate file: $e');
-              // Continue without file URL - use existing if available
-              if (_isEditMode && cert['certificateFileUrl'] != null) {
-                processedCert['certificateFileUrl'] =
-                    cert['certificateFileUrl'];
-              }
-            }
+          List<String> photoUrls = uploadResultsArrays['expiry_$certId'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl != null) {
+            processedCert['certificateFileUrl'] = primaryFileUrl;
+            processedCert['fileUrl'] = primaryFileUrl;
+            processedCert['photoUrls'] = photoUrls; // Store all photo URLs
           } else if (_isEditMode && cert['certificateFileUrl'] != null) {
-            // Keep existing file URL when not uploading new file
             processedCert['certificateFileUrl'] = cert['certificateFileUrl'];
+            // Preserve existing photoUrls if available
+            if (cert['photoUrls'] != null) {
+              processedCert['photoUrls'] = cert['photoUrls'];
+            }
           }
 
-          // Remove internal id field before saving
           processedCert.remove('id');
           processedExpiryCerts.add(processedCert);
         }
 
-        // Process competency certificates with files
+        // Process competency certificates with files - Updated for multiple photos
         List<Map<String, dynamic>> processedCompetencyCerts = [];
         for (var cert in _competencyCertificates) {
           final certId = cert['id'].toString();
-          final filePath = _competencyFiles[certId];
-
           Map<String, dynamic> processedCert = Map<String, dynamic>.from(cert);
 
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              final fileUrl = await CloudinaryService.uploadCertificate(
-                file: File(filePath),
-                vesselId: vesselId,
-                certificateId: certId,
-              );
-              processedCert['certificateFileUrl'] = fileUrl;
-              processedCert['fileUrl'] = fileUrl;
-            } catch (e) {
-              print('Failed to upload competency certificate file: $e');
-              if (_isEditMode && cert['certificateFileUrl'] != null) {
-                processedCert['certificateFileUrl'] =
-                    cert['certificateFileUrl'];
-              }
-            }
+          List<String> photoUrls = uploadResultsArrays['competency_$certId'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl != null) {
+            processedCert['certificateFileUrl'] = primaryFileUrl;
+            processedCert['fileUrl'] = primaryFileUrl;
+            processedCert['photoUrls'] = photoUrls; // Store all photo URLs
           } else if (_isEditMode && cert['certificateFileUrl'] != null) {
             processedCert['certificateFileUrl'] = cert['certificateFileUrl'];
+            if (cert['photoUrls'] != null) {
+              processedCert['photoUrls'] = cert['photoUrls'];
+            }
           }
 
           processedCert.remove('id');
           processedCompetencyCerts.add(processedCert);
         }
 
-        // Process competency licenses with files
+        // Process competency licenses with files - Updated for multiple photos
         List<Map<String, dynamic>> processedLicenses = [];
         for (var license in _competencyLicenses) {
           final licenseId = license['id'].toString();
-          final filePath = _licenseFiles[licenseId];
+          Map<String, dynamic> processedLicense = Map<String, dynamic>.from(license);
 
-          Map<String, dynamic> processedLicense = Map<String, dynamic>.from(
-            license,
-          );
-
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              final fileUrl = await CloudinaryService.uploadCertificate(
-                file: File(filePath),
-                vesselId: vesselId,
-                certificateId: licenseId,
-              );
-              processedLicense['certificateFileUrl'] = fileUrl;
-              processedLicense['fileUrl'] = fileUrl;
-            } catch (e) {
-              print('Failed to upload license file: $e');
-              if (_isEditMode && license['certificateFileUrl'] != null) {
-                processedLicense['certificateFileUrl'] =
-                    license['certificateFileUrl'];
-              }
-            }
+          List<String> photoUrls = uploadResultsArrays['license_$licenseId'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl != null) {
+            processedLicense['certificateFileUrl'] = primaryFileUrl;
+            processedLicense['fileUrl'] = primaryFileUrl;
+            processedLicense['photoUrls'] = photoUrls; // Store all photo URLs
           } else if (_isEditMode && license['certificateFileUrl'] != null) {
-            processedLicense['certificateFileUrl'] =
-                license['certificateFileUrl'];
+            processedLicense['certificateFileUrl'] = license['certificateFileUrl'];
+            if (license['photoUrls'] != null) {
+              processedLicense['photoUrls'] = license['photoUrls'];
+            }
           }
 
           processedLicense.remove('id');
           processedLicenses.add(processedLicense);
         }
 
-        // Combine officersCrew (SIRB members)
+        // Combine officersCrew (SIRB members) - Updated for multiple photos
         List<Map<String, dynamic>> officersCrew = [];
         for (var member in _sirbMembers) {
           final memberId = member['id'].toString();
-          final filePath = _sirbFiles[memberId];
+          Map<String, dynamic> processedMember = Map<String, dynamic>.from(member);
 
-          Map<String, dynamic> processedMember = Map<String, dynamic>.from(
-            member,
-          );
-
-          if (filePath != null && File(filePath).existsSync()) {
-            try {
-              final fileUrl = await CloudinaryService.uploadScannedFile(
-                file: File(filePath),
-                vesselId: vesselId,
-                documentType: 'sirb',
-              );
-              processedMember['fileUrl'] = fileUrl;
-            } catch (e) {
-              print('Failed to upload SIRB file: $e');
-              if (_isEditMode && member['fileUrl'] != null) {
-                processedMember['fileUrl'] = member['fileUrl'];
-              }
-            }
+          List<String> photoUrls = uploadResultsArrays['sirb_$memberId'] ?? [];
+          String? primaryFileUrl = photoUrls.isNotEmpty ? photoUrls[0] : null;
+          if (primaryFileUrl != null) {
+            processedMember['fileUrl'] = primaryFileUrl;
+            processedMember['seafarerIdFileUrl'] = primaryFileUrl;
+            processedMember['certificateFileUrl'] = primaryFileUrl;
+            processedMember['photoUrls'] = photoUrls; // Store all photo URLs
           } else if (_isEditMode && member['fileUrl'] != null) {
             processedMember['fileUrl'] = member['fileUrl'];
+            if (member['photoUrls'] != null) {
+              processedMember['photoUrls'] = member['photoUrls'];
+            }
           }
 
           processedMember.remove('id');
@@ -2763,6 +3077,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                     onPressed: details.onStepContinue,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0A4D68),
+                      foregroundColor: Colors.white,
                     ),
                     child: const Text('Next'),
                   )
@@ -2771,6 +3086,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                     onPressed: _isSubmitting ? null : _submitForm,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0A4D68),
+                      foregroundColor: Colors.white,
                     ),
                     child: _isSubmitting
                         ? const SizedBox(
@@ -3622,7 +3938,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                   final statusColor = dateExpiry.isNotEmpty
                       ? _getExpiryStatusColor(statusText)
                       : Colors.grey;
-                  final hasFile = _expiryFiles[cert['id'].toString()] != null;
+                  final hasFile = (_expiryFiles[cert['id'].toString()] ?? []).isNotEmpty;
 
                   return Card(
                     margin: EdgeInsets.only(bottom: 8),
@@ -3853,41 +4169,85 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                               ),
                             ],
                           ),
-                          // File actions if file exists
+                          // File actions if file exists - Updated for multiple photos
                           if (hasFile) ...[
                             SizedBox(height: 8),
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    _expiryFiles[cert['id'].toString()]!,
-                                    style: TextStyle(fontSize: 10),
-                                  ),
+                                Text(
+                                  'Photos: ${(_expiryFiles[cert['id'].toString()] ?? []).length}/3',
+                                  style: TextStyle(fontSize: 10, color: Colors.grey[600]),
                                 ),
+                              ],
+                            ),
+                            SizedBox(height: 8),
+                            // Display photo grid
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: (_expiryFiles[cert['id'].toString()] ?? []).asMap().entries.map((entry) {
+                                final index = entry.key;
+                                final filePath = entry.value;
+                                return Stack(
+                                  children: [
+                                    Container(
+                                      width: 60,
+                                      height: 60,
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: Colors.grey[300]!),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Image.file(
+                                          File(filePath),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 2,
+                                      right: 2,
+                                      child: GestureDetector(
+                                        onTap: () => _removeExpiryPhoto(cert['id'], index),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(2),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.red,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.close,
+                                            color: Colors.white,
+                                            size: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }).toList(),
+                            ),
+                            SizedBox(height: 8),
+                            Row(
+                              children: [
                                 IconButton(
                                   icon: Icon(Icons.visibility, size: 16),
-                                  onPressed: () =>
-                                      _viewFileForMember('expiry', cert['id']),
+                                  onPressed: () => _viewFileForMember('expiry', cert['id']),
                                   padding: EdgeInsets.zero,
                                   constraints: BoxConstraints(),
                                 ),
-                                IconButton(
-                                  icon: Icon(Icons.edit, size: 16),
-                                  onPressed: () =>
-                                      _uploadExpiryFile(cert['id']),
-                                  padding: EdgeInsets.zero,
-                                  constraints: BoxConstraints(),
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.delete,
-                                    size: 16,
-                                    color: Colors.red,
+                                if ((_expiryFiles[cert['id'].toString()] ?? []).length < 3)
+                                  IconButton(
+                                    icon: Icon(Icons.add_photo_alternate, size: 16),
+                                    onPressed: () => _uploadExpiryFile(cert['id']),
+                                    padding: EdgeInsets.zero,
+                                    constraints: BoxConstraints(),
                                   ),
-                                  onPressed: () => _deleteFileForMember(
-                                    'expiry',
-                                    cert['id'],
-                                  ),
+                                IconButton(
+                                  icon: Icon(Icons.delete, size: 16, color: Colors.red),
+                                  onPressed: () => _deleteFileForMember('expiry', cert['id']),
                                   padding: EdgeInsets.zero,
                                   constraints: BoxConstraints(),
                                 ),
@@ -3926,7 +4286,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
     String certId,
   ) {
     final validityStatus = _calculateValidityStatus(dateController.text);
-    final hasFile = _noExpiryFiles[certId] != null;
+    final hasFile = (_noExpiryFiles[certId] ?? []).isNotEmpty;
 
     return Card(
       elevation: 1,
@@ -3985,51 +4345,111 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               ],
             ),
             SizedBox(height: 8),
-            // File upload section
-            Row(
+            // File upload section - Updated for multiple photos
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: Text('File:', style: TextStyle(fontSize: 11))),
-                if (!hasFile) ...[
-                  ElevatedButton.icon(
-                    onPressed: () => _uploadNoExpiryFile(certId),
-                    icon: Icon(Icons.upload, size: 14),
-                    label: Text('Upload', style: TextStyle(fontSize: 10)),
-                    style: ElevatedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      minimumSize: Size.zero,
-                    ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('File:', style: TextStyle(fontSize: 11)),
+                    if (hasFile)
+                      Text(
+                        '${(_noExpiryFiles[certId] ?? []).length}/3',
+                        style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                      ),
+                  ],
+                ),
+                if (hasFile) ...[
+                  const SizedBox(height: 8),
+                  // Display photo grid
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: (_noExpiryFiles[certId] ?? []).asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final filePath = entry.value;
+                      return Stack(
+                        children: [
+                          Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[300]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.file(
+                                File(filePath),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 2,
+                            right: 2,
+                            child: GestureDetector(
+                              onTap: () => _removeNoExpiryPhoto(certId, index),
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Colors.red,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
                   ),
-                ] else ...[
-                  Expanded(
-                    child: Text(
-                      _noExpiryFiles[certId]!
-                          .split('/')
-                          .last, // Show only filename
-                      style: TextStyle(fontSize: 10),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                  ),
-                  SizedBox(width: 4),
-                  IconButton(
-                    icon: Icon(Icons.visibility, size: 16),
-                    onPressed: () => _viewFileForMember('noexpiry', certId),
-                    padding: EdgeInsets.zero,
-                    constraints: BoxConstraints(),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.edit, size: 16),
-                    onPressed: () => _uploadNoExpiryFile(certId),
-                    padding: EdgeInsets.zero,
-                    constraints: BoxConstraints(),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.delete, size: 16, color: Colors.red),
-                    onPressed: () => _deleteFileForMember('noexpiry', certId),
-                    padding: EdgeInsets.zero,
-                    constraints: BoxConstraints(),
-                  ),
+                  const SizedBox(height: 8),
                 ],
+                Row(
+                  children: [
+                    if (!hasFile || (_noExpiryFiles[certId] ?? []).length < 3) ...[
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _uploadNoExpiryFile(certId),
+                          icon: Icon(Icons.upload, size: 14),
+                          label: Text('Upload', style: TextStyle(fontSize: 10)),
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            minimumSize: Size.zero,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (hasFile) ...[
+                      SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(Icons.visibility, size: 16),
+                        onPressed: () => _viewFileForMember('noexpiry', certId),
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(),
+                      ),
+                      if ((_noExpiryFiles[certId] ?? []).length < 3)
+                        IconButton(
+                          icon: Icon(Icons.add_photo_alternate, size: 16),
+                          onPressed: () => _uploadNoExpiryFile(certId),
+                          padding: EdgeInsets.zero,
+                          constraints: BoxConstraints(),
+                        ),
+                      IconButton(
+                        icon: Icon(Icons.delete, size: 16, color: Colors.red),
+                        onPressed: () => _deleteFileForMember('noexpiry', certId),
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ],
@@ -4539,7 +4959,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
   // SIRB Card Builder
   Widget _buildSirbCard(Map<String, dynamic> member) {
-    final hasFile = _sirbFiles[member['id'].toString()] != null;
+    final hasFile = (_sirbFiles[member['id'].toString()] ?? []).isNotEmpty;
     final expiryStatus = member['dateExpiry'].toString().isNotEmpty
         ? _calculateExpiryStatus(
             member['dateExpiry'].toString(),
@@ -4687,7 +5107,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 children: [
                   Expanded(
                     child: Text(
-                      _sirbFiles[member['id'].toString()]!.split('/').last,
+                      (_sirbFiles[member['id'].toString()] ?? []).isNotEmpty
+                          ? '${(_sirbFiles[member['id'].toString()]!.length)} photo(s)'
+                          : 'No file',
                       style: TextStyle(fontSize: 10),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -4721,7 +5143,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
   // Certificate of Competency Card Builder
   Widget _buildCompetencyCard(Map<String, dynamic> cert) {
-    final hasFile = _competencyFiles[cert['id'].toString()] != null;
+    final hasFile = (_competencyFiles[cert['id'].toString()] ?? []).isNotEmpty;
     final expiryStatus = cert['dateExpiry'].toString().isNotEmpty
         ? _calculateExpiryStatus(
             cert['dateExpiry'].toString(),
@@ -4872,7 +5294,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 children: [
                   Expanded(
                     child: Text(
-                      _competencyFiles[cert['id'].toString()]!.split('/').last,
+                      (_competencyFiles[cert['id'].toString()] ?? []).isNotEmpty
+                          ? '${(_competencyFiles[cert['id'].toString()]!.length)} photo(s)'
+                          : 'No file',
                       style: TextStyle(fontSize: 10),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -4908,7 +5332,7 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
 
   // License Card Builder
   Widget _buildLicenseCard(Map<String, dynamic> license) {
-    final hasFile = _licenseFiles[license['id'].toString()] != null;
+    final hasFile = (_licenseFiles[license['id'].toString()] ?? []).isNotEmpty;
     final expiryStatus = license['dateExpiry'].toString().isNotEmpty
         ? _calculateExpiryStatus(
             license['dateExpiry'].toString(),
@@ -5063,7 +5487,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 children: [
                   Expanded(
                     child: Text(
-                      _licenseFiles[license['id'].toString()]!.split('/').last,
+                      (_licenseFiles[license['id'].toString()] ?? []).isNotEmpty
+                          ? '${(_licenseFiles[license['id'].toString()]!.length)} photo(s)'
+                          : 'No file',
                       style: TextStyle(fontSize: 10),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -5266,8 +5692,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
                 children: [
                   Expanded(
                     child: Text(
-                      _crewFiles[member['id'].toString()]?.split('/').last ??
-                          'Unknown file',
+                      (_crewFiles[member['id'].toString()] ?? []).isNotEmpty
+                          ? '${(_crewFiles[member['id'].toString()]!.length)} photo(s)'
+                          : 'No file',
                       style: TextStyle(fontSize: 10),
                     ),
                   ),
@@ -5346,7 +5773,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
       if (image == null) return;
 
       setState(() {
-        _crewFiles[crewId.toString()] = image.path;
+        final crewIdStr = crewId.toString();
+        final currentFiles = _crewFiles[crewIdStr] ?? [];
+        _crewFiles[crewIdStr] = [...currentFiles, image.path];
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5505,7 +5934,9 @@ class _AddVesselScreenV2State extends State<AddVesselScreenV2> {
               extractedData['certificateNumber'],
             );
           }
-          _crewFiles[crewId.toString()] = image.path;
+          final crewIdStr = crewId.toString();
+          final currentFiles = _crewFiles[crewIdStr] ?? [];
+          _crewFiles[crewIdStr] = [...currentFiles, image.path];
         });
 
         // Show success message

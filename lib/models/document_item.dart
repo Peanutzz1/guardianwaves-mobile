@@ -11,6 +11,7 @@ class DocumentItem {
     this.issuedDate,
     this.fileUrl,
     this.crewName,
+    this.photoUrls,
   });
 
   final String id;
@@ -24,5 +25,6 @@ class DocumentItem {
   final dynamic issuedDate;
   final String? fileUrl;
   final String? crewName;
+  final List<String>? photoUrls; // Array of all photo URLs
 }
 
